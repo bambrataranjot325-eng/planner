@@ -429,3 +429,113 @@ describe('filter: order emails that announce a change', () => {
     expect(filterMessage(msg('Thanks for your order - Order #658817540')).decision).toBe('skip');
   });
 });
+
+import { mapFeed } from '../src/brightspace/map.js';
+import { syncBrightspace } from '../src/brightspace/sync.js';
+
+describe('brightspace feed to calendar items', () => {
+  const text = readFileSync(join(fixturesDir, 'brightspace.ics'), 'utf8');
+  const NOW = new Date('2026-11-10T04:00:00Z');
+  const ev = (over: Record<string, unknown>) => ({ uid: 'u1', summary: 'Lab 3 - Due', description: '', location: 'Physics', dtstart: '20261120T045900Z', dtend: '', allDay: false, tzid: null, fields: [], ...over }) as any;
+
+  it('maps the fixture feed: due dates become tasks, sittings become events, "Available" is ignored', () => {
+    const { items, skipped } = mapFeed(parseIcs(text), NY, NOW);
+    expect(skipped).toEqual({ opens_only: 1 });
+    expect(items.map((i) => [i.row.kind, i.row.title, i.row.priority])).toEqual([
+      ['task', 'Homework 8', 'medium'],
+      ['task', 'Quiz 7', 'medium'],
+      ['event', 'Midterm Exam 2', 'high'],
+      ['event', 'Guest lecture: embedded security', 'medium'],
+    ]);
+    const hw = items[0]!;
+    expect(hw.row).toMatchObject({ due_at: '2026-11-14T04:59:00Z', due_precision: 'exact', category: 'study', action_required: true, course: 'Data Structures and Algorithms, Section A' });
+    expect(hw.link).toContain('folder_submit_files');
+    expect(hw.row.summary).not.toContain('http');
+    expect(items[2]!.row).toMatchObject({ all_day: true, start_at: '2026-11-19T05:00:00Z', end_at: null }); // all day on the 19th, New York
+    expect(items[3]!.row).toMatchObject({ start_at: '2026-11-12T19:00:00Z', end_at: '2026-11-12T20:15:00Z' });
+  });
+  it('an 11:59 PM New York deadline stays on the right day (the old workflow stored it a day late)', () => {
+    const { items } = mapFeed(parseIcs(text), NY, NOW);
+    expect(utcToLocal(items[0]!.row.due_at, NY)).toBe('2026-11-13T23:59');
+  });
+  it('"Availability Ends" is a deadline only when there is no Due entry for the same thing', () => {
+    const alone = mapFeed([ev({ summary: 'Reading quiz - Availability Ends' })], NY, NOW);
+    expect(alone.items[0]!.row).toMatchObject({ kind: 'task', title: 'Reading quiz', priority_reason: 'Course item; closes then' });
+    const both = mapFeed([ev({ summary: 'Reading quiz - Due' }), ev({ uid: 'u2', summary: 'Reading quiz - Availability Ends', dtstart: '20261121T045900Z' })], NY, NOW);
+    expect(both.items).toHaveLength(1);
+    expect(both.skipped).toEqual({ closes_but_has_due_date: 1 });
+  });
+  it('leaves out things already more than a day past, reads TZID times, and pulls a course code when there is one', () => {
+    expect(mapFeed([ev({ dtstart: '20261101T045900Z' })], NY, NOW).skipped).toEqual({ already_past: 1 });
+    const local = mapFeed([ev({ summary: 'Recitation', dtstart: '20261112T140000', tzid: 'America/New_York', location: 'CS-UY 1134 Data Structures' })], SYD, NOW).items[0]!;
+    expect(local.row).toMatchObject({ kind: 'event', start_at: '2026-11-12T19:00:00Z', course: 'CS-UY 1134' });
+  });
+  it('an all-day due date means the end of that day where I am', () => {
+    const it2 = mapFeed([ev({ dtstart: '20261120', allDay: true })], SYD, NOW).items[0]!;
+    expect(it2.row).toMatchObject({ due_at: '2026-11-20T12:59:00Z', due_precision: 'date_only' });
+  });
+});
+
+describe('brightspace sync', () => {
+  const feed = readFileSync(join(fixturesDir, 'brightspace.ics'), 'utf8');
+  function setup() {
+    const store = new MemoryStore();
+    const source: any = { id: 's1', label: 'Brightspace', account: 'brightspace.example', status: 'active', cursor: {}, backfill_done: false, last_success_at: null };
+    const alerts: string[] = [];
+    const db: any = {
+      startRun: async () => 'run', finishRun: async () => {}, getSecret: async () => 'https://feed.example/secret-token',
+      updateSource: async (_id: string, patch: any) => Object.assign(source, patch),
+      alert: async (kind: string) => { alerts.push(kind); },
+      itemIdBySourceRef: async (_t: string, ref: string) => store.items.find((i) => i.sources.includes(ref))?.id ?? null,
+    };
+    const serve = (body: string, status = 200) => async () => ({ ok: status < 400, status, text: async () => body });
+    return { store, source, db, alerts, serve };
+  }
+  // The fixture's dates are in November 2026; these tests run "now", so use a copy moved far into the future.
+  const future = feed.replace(/2026(\d{4})/g, '2099$1');
+
+  it('first sync creates the items; an identical feed afterwards does no work', async () => {
+    const t = setup();
+    const first = await syncBrightspace(t.db, t.store, t.source, NY, t.serve(future));
+    expect(first).toMatchObject({ events: 5, created: 4, linked_to_existing: 0 });
+    expect(t.source).toMatchObject({ status: 'active', backfill_done: true });
+    const again = await syncBrightspace(t.db, t.store, t.source, NY, t.serve(future));
+    expect(again.unchanged).toBe(true);
+    expect(t.store.items).toHaveLength(4);
+  });
+  it('a moved deadline updates the same item instead of adding another', async () => {
+    const t = setup();
+    await syncBrightspace(t.db, t.store, t.source, NY, t.serve(future));
+    const moved = future.replace('DTSTART:20991114T045900Z', 'DTSTART:20991117T045900Z');
+    const out = await syncBrightspace(t.db, t.store, t.source, NY, t.serve(moved));
+    expect(out).toMatchObject({ created: 0, checked: 4 });
+    expect(t.store.items).toHaveLength(4);
+    expect(t.store.items.find((i) => i.row.title === 'Homework 8')!.row.due_at).toBe('2099-11-17T04:59:00Z');
+  });
+  it('a deadline an email already produced is linked, not duplicated, and the feed then keeps its date', async () => {
+    const t = setup();
+    const emailRow = toItemRow({ title: 'Submit Homework 8 on Brightspace', summary: 's', kind: 'task', start_local: null, end_local: null, due_local: '2099-11-13T23:59', due_precision: 'exact', course: null, priority: 'medium', priority_reason: 'r', category: 'study', action_required: true, confidence: 0.9 }, NY, 0.6);
+    await t.store.insert(emailRow, 'gmail:thread1');
+    const out = await syncBrightspace(t.db, t.store, t.source, NY, t.serve(future));
+    expect(out).toMatchObject({ created: 3, linked_to_existing: 1 });
+    expect(t.store.items).toHaveLength(4);
+    const moved = future.replace('DTSTART:20991114T045900Z', 'DTSTART:20991117T045900Z');
+    await syncBrightspace(t.db, t.store, t.source, NY, t.serve(moved));
+    expect(t.store.items[0]!.row.due_at).toBe('2099-11-17T04:59:00Z');
+    expect(t.store.items).toHaveLength(4);
+  });
+  it('a dead feed address marks Brightspace as needing attention and raises one alert', async () => {
+    const t = setup();
+    await syncBrightspace(t.db, t.store, t.source, NY, t.serve('gone', 404));
+    expect(t.source.status).toBe('needs_reauth');
+    expect(t.alerts).toEqual(['needs_reauth']);
+    expect(t.source.last_error).not.toContain('secret-token'); // the address never ends up in an error
+  });
+  it('a page that is not a calendar is an error, not an empty calendar', async () => {
+    const t = setup();
+    await syncBrightspace(t.db, t.store, t.source, NY, t.serve('<html>Sign in</html>'));
+    expect(t.source.status).toBe('active');
+    expect(t.source.last_error).toContain('did not return a calendar');
+    expect(t.store.items).toHaveLength(0);
+  });
+});

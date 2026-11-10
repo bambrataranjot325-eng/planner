@@ -6,6 +6,7 @@ export interface IcsEvent {
   dtstart: string;
   dtend: string;
   allDay: boolean;
+  tzid: string | null; // TZID on DTSTART, when the time is not given in UTC
   fields: string[];
 }
 
@@ -19,10 +20,12 @@ export function parseIcs(text: string): IcsEvent[] {
   const events: IcsEvent[] = [];
   let cur: Record<string, string> | null = null;
   let allDay = false;
+  let tzid: string | null = null;
   for (const line of lines) {
     if (line === 'BEGIN:VEVENT') {
       cur = {};
       allDay = false;
+      tzid = null;
       continue;
     }
     if (line === 'END:VEVENT') {
@@ -35,6 +38,7 @@ export function parseIcs(text: string): IcsEvent[] {
           dtstart: cur.DTSTART ?? '',
           dtend: cur.DTEND ?? '',
           allDay,
+          tzid,
           fields: Object.keys(cur),
         });
       }
@@ -48,6 +52,7 @@ export function parseIcs(text: string): IcsEvent[] {
     const key = rawKey.split(';')[0]!;
     cur[key] = line.slice(idx + 1);
     if (key === 'DTSTART' && rawKey.includes('VALUE=DATE') && !rawKey.includes('DATE-TIME')) allDay = true;
+    if (key === 'DTSTART') tzid = rawKey.match(/TZID=([^;:]+)/)?.[1] ?? null;
   }
   return events;
 }

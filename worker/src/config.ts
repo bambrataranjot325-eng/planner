@@ -52,6 +52,7 @@ const Env = z.object({
   BACKFILL_SKIP_PAST: z.enum(['true', 'false']).default('true'),
   OAUTH_REDIRECT_URI: z.string().url().default('http://localhost:53682/oauth/callback'),
   BRIGHTSPACE_FEED_URL: z.string().url().optional(),
+  BRIGHTSPACE_MINUTES: z.coerce.number().int().min(5).default(60),
 });
 export type Env = z.infer<typeof Env> & { MODE: Mode };
 

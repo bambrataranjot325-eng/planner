@@ -9,8 +9,9 @@ export interface SourceRow {
   label: string;
   account: string;
   status: string;
-  cursor: { historyId?: string };
+  cursor: { historyId?: string; hash?: string };
   backfill_done: boolean;
+  last_success_at: string | null;
 }
 
 function check<T>(res: { data: T; error: { message: string } | null }, what: string): T {
@@ -31,22 +32,31 @@ export class Db {
     return { timezone: defaultZone, capUsd: 5 };
   }
 
-  async gmailSources(): Promise<SourceRow[]> {
+  async sources(kind: 'gmail' | 'brightspace'): Promise<SourceRow[]> {
     return check(
-      await this.sb.from('sources').select('id, label, account, status, cursor, backfill_done').eq('user_id', this.userId).eq('kind', 'gmail'),
+      await this.sb.from('sources').select('id, label, account, status, cursor, backfill_done, last_success_at').eq('user_id', this.userId).eq('kind', kind),
       'read sources',
     ) as SourceRow[];
   }
 
-  async upsertGmailSource(account: string, label: string): Promise<string> {
+  async upsertSource(kind: 'gmail' | 'brightspace', account: string, label: string): Promise<string> {
     const rows = check(
       await this.sb
         .from('sources')
-        .upsert({ user_id: this.userId, kind: 'gmail', account, label, status: 'active', last_error: null }, { onConflict: 'user_id,kind,account' })
+        .upsert({ user_id: this.userId, kind, account, label, status: 'active', last_error: null }, { onConflict: 'user_id,kind,account' })
         .select('id'),
       'save source',
     );
     return rows![0]!.id as string;
+  }
+
+  /** The item a feed event (or message) already belongs to, if any. */
+  async itemIdBySourceRef(type: 'email' | 'brightspace', ref: string): Promise<string | null> {
+    const rows = check(
+      await this.sb.from('item_sources').select('item_id').eq('user_id', this.userId).eq('source_type', type).eq('ref', ref).limit(1),
+      'read item source',
+    );
+    return rows && rows.length ? (rows[0]!.item_id as string) : null;
   }
 
   async getSecret(sourceId: string): Promise<string | null> {
@@ -179,10 +189,10 @@ export class DbItemStore implements ItemStore {
     return (check(await base().is('start_at', null).is('due_at', null).gte('created_at', month).limit(100), 'read undated items') ?? []) as Candidate[];
   }
 
-  async insert(row: ItemRow, threadKey: string, link: string): Promise<string> {
+  async insert(row: ItemRow, threadKey: string, link: string | null, origin: 'email' | 'brightspace'): Promise<string> {
     const { review_state, ...ai } = row;
     const rows = check(
-      await this.db.sb.from('items').insert({ user_id: this.db.userId, ...ai, review_state, ai_values: ai, origin: 'email', thread_key: threadKey, link }).select('id'),
+      await this.db.sb.from('items').insert({ user_id: this.db.userId, ...ai, review_state, ai_values: ai, origin, thread_key: threadKey, link }).select('id'),
       'create item',
     );
     return rows![0]!.id as string;
@@ -197,7 +207,7 @@ export class DbItemStore implements ItemStore {
       await this.db.sb
         .from('item_sources')
         .upsert(
-          { user_id: this.db.userId, item_id: itemId, source_type: 'email', source_id: src.sourceId, message_id: src.messageRowId, ref: src.ref, link: src.link },
+          { user_id: this.db.userId, item_id: itemId, source_type: src.type, source_id: src.sourceId, message_id: src.messageRowId, ref: src.ref, link: src.link },
           { onConflict: 'item_id,source_type,ref', ignoreDuplicates: true },
         ),
       'link item source',

@@ -12,7 +12,8 @@ export interface Candidate {
   due_at: string | null;
 }
 export interface SourceRef {
-  ref: string; // provider message id
+  type: 'email' | 'brightspace';
+  ref: string; // provider message id, or the feed event's UID
   link: string;
   sourceId: string | null;
   messageRowId: string | null;
@@ -24,7 +25,7 @@ export interface ItemStore {
   context(threadKey: string, zone: string, since: Date): Promise<ExistingItem[]>;
   /** Items that could be the same real-world thing as `row`. */
   nearby(row: ItemRow): Promise<Candidate[]>;
-  insert(row: ItemRow, threadKey: string, link: string): Promise<string>;
+  insert(row: ItemRow, threadKey: string, link: string | null, origin: 'email' | 'brightspace'): Promise<string>;
   update(id: string, patch: Record<string, unknown>): Promise<void>;
   link(itemId: string, src: SourceRef): Promise<void>;
 }
@@ -41,13 +42,17 @@ function tokens(title: string): Set<string> {
   );
 }
 
-/** Share of words two titles have in common (0 to 1). */
+/**
+ * Share of words two titles have in common (0 to 1). When every word of the shorter title appears in
+ * the longer one ("Homework 8" inside "Submit Homework 8 on Brightspace") they count as the same.
+ */
 export function titleSimilarity(a: string, b: string): number {
   const ta = tokens(a);
   const tb = tokens(b);
   if (!ta.size || !tb.size) return 0;
   let both = 0;
   for (const t of ta) if (tb.has(t)) both++;
+  if (both === Math.min(ta.size, tb.size) && both >= 2) return 1;
   return both / (ta.size + tb.size - both);
 }
 
@@ -125,7 +130,7 @@ export async function applyItem(store: ItemStore, item: ExtractedItem, row: Item
     await store.link(dup.id, ctx.src); // keep every source reference on the one item
     return { action: 'merged', itemId: dup.id };
   }
-  const id = await store.insert(row, ctx.threadKey, ctx.src.link);
+  const id = await store.insert(row, ctx.threadKey, ctx.src.link, 'email');
   await store.link(id, ctx.src);
   return { action: 'created', itemId: id };
 }

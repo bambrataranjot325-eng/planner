@@ -34,7 +34,7 @@ export async function authCommand(env: Env): Promise<void> {
         const tokens = await exchangeCode(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, code, env.OAUTH_REDIRECT_URI);
         if (!tokens.refreshToken) return finish(500, 'Google did not return a refresh token. Remove the app at myaccount.google.com/permissions and try again.', new Error('no refresh token'));
         const profile = await makeGmailApi(tokens.accessToken).getProfile();
-        const sourceId = await db.upsertGmailSource(profile.emailAddress, profile.emailAddress.split('@')[0] ?? 'Gmail');
+        const sourceId = await db.upsertSource('gmail', profile.emailAddress, profile.emailAddress.split('@')[0] ?? 'Gmail');
         await db.setSecret(sourceId, tokens.refreshToken);
         log('inbox_connected', { account: profile.emailAddress });
         finish(200, `Connected ${profile.emailAddress}. You can close this tab.`);

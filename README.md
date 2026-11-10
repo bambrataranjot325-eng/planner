@@ -93,10 +93,34 @@ make logs
 
 The first live run reads the last 30 days. After that it checks every 15 minutes for new mail only.
 
-### 7. Brightspace feed check
+### 7. Brightspace
 
-Put the feed URL in `.env` as `BRIGHTSPACE_FEED_URL`, then `make brightspace-report`. The output
-counts event types and shows one scrubbed sample of each. Nothing is stored yet.
+Put the feed address in `.env` as `BRIGHTSPACE_FEED_URL`, then:
+
+```
+make brightspace-preview     # what would go on the calendar; saves nothing
+make connect-brightspace     # stores the address in the Vault; syncing starts within the hour
+```
+
+After connecting you can delete the address from `.env`. The feed is read hourly. Due dates become
+tasks, sittings and course events become events, and "Available" entries are ignored. No AI is used for
+Brightspace, so it costs nothing. A deadline that an email already put on the calendar is linked to the
+feed rather than duplicated, and the feed then keeps its date current.
+
+### 8. More inboxes
+
+A new inbox starts reading 30 days of mail as soon as the live worker sees it, so stop the worker
+first if you want a trial run:
+
+```
+make stop
+make auth                                   # in the SSH tunnel; choose the new account
+make dry-run ACCOUNT=new.address@example.com
+make report
+make deploy                                 # when the report looks right
+```
+
+A university account may refuse the sign-in if its administrators block unverified apps.
 
 ## Day to day
 
@@ -142,11 +166,10 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
 ## Tests
 
 ```
-make test                 # 88 unit tests
+make test                 # 98 unit tests
 ./scripts/test-sql.sh     # needs a local Postgres; runs the migration and the security tests
 ```
 
 ## Not in Phase 1
 
-Alerts are rows in a table; nothing notifies you yet. No web app, Brightspace sync, other inboxes,
-dedupe against Brightspace, backups, or server hardening changes. See the open questions in the chat.
+Alerts are rows in a table; nothing notifies you yet. No backups or server hardening changes yet. See the open questions in the chat.

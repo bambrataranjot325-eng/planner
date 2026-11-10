@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadModels, loadPrompt, log, reportsDir, type Env } from './config.js';
 import { Db, DbItemStore, type SourceRow } from './db.js';
+import { syncBrightspace } from './brightspace/sync.js';
 import { ReauthError, refreshAccessToken } from './gmail/auth.js';
 import { makeGmailApi } from './gmail/client.js';
 import { parseGmailMessage } from './gmail/parse.js';
@@ -146,7 +147,7 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
         const { action } = await applyItem(store, item, row, {
           knownIds,
           threadKey,
-          src: { ref: msg.id, link, sourceId: source.id, messageRowId },
+          src: { type: 'email', ref: msg.id, link, sourceId: source.id, messageRowId },
           skipPast: plan.kind === 'backfill' && env.BACKFILL_SKIP_PAST === 'true',
           now: new Date(),
         });
@@ -200,7 +201,17 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
 
 export async function runOnce(env: Env): Promise<void> {
   const db = new Db(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.USER_ID);
-  const sources = await db.gmailSources();
+  const only = process.env.ONLY_ACCOUNT?.toLowerCase(); // e.g. to trial one newly connected inbox
+  const sources = (await db.sources('gmail')).filter((s) => !only || s.account.toLowerCase() === only);
+  if (env.MODE === 'live' && !only) {
+    for (const feed of await db.sources('brightspace')) {
+      if (feed.status !== 'active') { log('source_skipped', { source: feed.label, status: feed.status }); continue; }
+      const last = feed.last_success_at ? Date.parse(feed.last_success_at) : 0;
+      if (Date.now() - last < env.BRIGHTSPACE_MINUTES * 60_000) continue; // the feed is polled hourly, not every run
+      const { timezone } = await db.settings(env.DEFAULT_TIMEZONE);
+      await syncBrightspace(db, new DbItemStore(db), feed, timezone).catch((e) => log('brightspace_error', { error: (e as Error).message.slice(0, 300) }));
+    }
+  }
   if (!sources.length) {
     log('no_sources', { hint: 'run "make auth" to connect an inbox' });
     return;
