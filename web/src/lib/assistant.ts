@@ -10,7 +10,7 @@ export interface ProposedAdd {
   location?: string | null; course?: string | null; category?: Category; priority?: Priority; notes?: string | null; timezone?: string | null;
   repeat?: { weekdays: number[]; until: string } | null;
 }
-export interface ProposedUpdate { id: string; title?: string; start_local?: string | null; end_local?: string | null; due_local?: string | null; location?: string | null; status?: 'open' | 'done'; notes?: string | null }
+export interface ProposedUpdate { id: string; title?: string; start_local?: string | null; end_local?: string | null; due_local?: string | null; location?: string | null; status?: 'open' | 'done'; notes?: string | null; course?: string | null; category?: Category; priority?: Priority }
 export interface ClassBlock { label: string; days: number[]; start: string; end: string }
 export interface Proposal { add: ProposedAdd[]; update: ProposedUpdate[]; remove: string[]; class_blocks: ClassBlock[] }
 export interface ProposalState { applied_at?: string; batch_id?: string | null; undone_at?: string; added?: number; updated?: number; removed?: number; blocks?: number }
@@ -95,6 +95,9 @@ export function updatePatch(u: ProposedUpdate, item: Item, deviceZone: string): 
   if (u.location !== undefined) patch.location = u.location?.trim() || null;
   if (u.notes !== undefined) patch.summary = u.notes?.trim() || null;
   if (u.status) patch.status = u.status;
+  if (u.course !== undefined) patch.course = u.course?.trim() || null;
+  if (u.category) patch.category = u.category;
+  if (u.priority) patch.priority = u.priority;
   const start = parse(u.start_local, zone), end = parse(u.end_local, zone), due = parse(u.due_local, zone);
   if (item.kind === 'event') {
     if (start) {
@@ -103,6 +106,9 @@ export function updatePatch(u: ProposedUpdate, item: Item, deviceZone: string): 
       if (!end && item.start_at && item.end_at) patch.end_at = iso(start.plus({ milliseconds: Date.parse(item.end_at) - Date.parse(item.start_at) }));
     }
     if (end) patch.end_at = iso(end);
+    // A work session's length is what its project counts, so keep the two in step.
+    const newStart = patch.start_at ?? item.start_at, newEnd = patch.end_at ?? item.end_at;
+    if (item.origin === 'plan' && newStart && newEnd && (patch.start_at || patch.end_at)) patch.planned_minutes = Math.max(5, Math.round((Date.parse(newEnd) - Date.parse(newStart)) / 60_000));
   } else {
     const d = due ?? start;
     const str = u.due_local ?? u.start_local;
@@ -117,10 +123,17 @@ export function describeUpdate(u: ProposedUpdate, item: Item, deviceZone: string
   const parts: string[] = [];
   const when = p.start_at ?? p.due_at;
   if (when) parts.push(`${item.kind === 'task' ? 'due' : 'move to'} ${DateTime.fromISO(when, { zone: 'utc' }).setZone(zone).toFormat(p.all_day || p.due_precision === 'date_only' ? 'ccc d LLL' : 'ccc d LLL, h:mm a')}`);
-  else if (p.end_at) parts.push(`end at ${DateTime.fromISO(p.end_at, { zone: 'utc' }).setZone(zone).toFormat('h:mm a')}`);
+  else if (p.end_at) {
+    const delta = item.end_at ? Math.round((Date.parse(p.end_at) - Date.parse(item.end_at)) / 60_000) : 0;
+    const by = delta ? ` (${Math.abs(delta) % 60 === 0 ? `${Math.abs(delta) / 60} hour${Math.abs(delta) === 60 ? '' : 's'}` : `${Math.abs(delta)} minutes`} ${delta > 0 ? 'longer' : 'shorter'})` : '';
+    parts.push(`end at ${DateTime.fromISO(p.end_at, { zone: 'utc' }).setZone(zone).toFormat('h:mm a')}${by}`);
+  }
   if (p.title) parts.push(`rename to "${p.title}"`);
   if (p.location !== undefined) parts.push(p.location ? `location: ${p.location}` : 'clear the location');
   if (p.status) parts.push(p.status === 'done' ? 'mark done' : 'reopen');
+  if (p.priority) parts.push(`${p.priority} priority`);
+  if (p.category) parts.push(`category: ${p.category}`);
+  if (p.course !== undefined) parts.push(p.course ? `course: ${p.course}` : 'clear the course');
   if (p.summary !== undefined && !parts.length) parts.push('update the notes');
   const text = parts.join(', ') || 'no change';
   return text[0]!.toUpperCase() + text.slice(1);

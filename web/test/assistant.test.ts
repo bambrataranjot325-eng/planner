@@ -55,6 +55,15 @@ describe('changing an existing item', () => {
     expect(describeUpdate({ id: 'i', status: 'done' }, task, Z)).toBe('Mark done');
     expect(describeUpdate({ id: 'i', title: 'Blog post 7' }, task, Z)).toBe('Rename to "Blog post 7"');
   });
+  it('making a work session an hour longer also raises the minutes its project counts', () => {
+    const session = item({ origin: 'plan', project_id: 'p1', planned_minutes: 60, title: 'Final Review for OOP: Review core OOP', start_at: '2026-11-10T09:00:00Z', end_at: '2026-11-10T10:00:00Z' });
+    expect(updatePatch({ id: 'i', end_local: '2026-11-10T22:00' }, session, Z)).toEqual({ end_at: '2026-11-10T11:00:00Z', planned_minutes: 120 });
+    expect(describeUpdate({ id: 'i', end_local: '2026-11-10T22:00' }, session, Z)).toBe('End at 10:00 PM (1 hour longer)');
+    // moving it without changing its length leaves the count alone at the same value
+    expect(updatePatch({ id: 'i', start_local: '2026-11-11T20:00' }, session, Z)).toMatchObject({ planned_minutes: 60 });
+    // an ordinary event has no planned minutes to keep
+    expect(updatePatch({ id: 'i', end_local: '2026-11-10T22:00' }, item({ start_at: '2026-11-10T09:00:00Z', end_at: '2026-11-10T10:00:00Z' }), Z)).toEqual({ end_at: '2026-11-10T11:00:00Z' });
+  });
   it('an update with nothing usable changes nothing', () => {
     expect(updatePatch({ id: 'i', start_local: 'next week sometime' }, meeting, Z)).toEqual({});
   });
