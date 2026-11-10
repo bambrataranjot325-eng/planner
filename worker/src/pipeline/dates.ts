@@ -40,3 +40,18 @@ export function utcToLocal(iso: string | null, zone: string): string | null {
 export function isValidZone(zone: string): boolean {
   return /^[A-Za-z_]+\/[A-Za-z0-9_+\-\/]+$|^UTC$/.test(zone) && DateTime.local().setZone(zone).isValid;
 }
+
+/**
+ * Models sometimes push a date with no year into next year when it had only just passed
+ * ("due 9 Nov" in an email received 10 Nov became 9 Nov of the following year). If the same day
+ * in the email's own year falls within the 60 days before the email arrived, use that instead.
+ */
+export function pullBackYear(local: string | null, received: Date, zone: string): string | null {
+  if (!local) return local;
+  const recv = DateTime.fromJSDate(received, { zone });
+  const dt = DateTime.fromISO(local, { zone });
+  if (!dt.isValid || dt.year !== recv.year + 1) return local;
+  const sameYear = dt.set({ year: recv.year });
+  const daysBefore = recv.diff(sameYear, 'days').days;
+  return daysBefore >= 0 && daysBefore <= 60 ? `${recv.year}${local.slice(4)}` : local;
+}

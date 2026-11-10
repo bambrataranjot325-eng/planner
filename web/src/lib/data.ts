@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { demoItems } from './demo';
-import type { AuditEntry, Item, ItemDraft, SourceInfo } from './types';
+import { DEFAULT_PROFILE, type PlannedSession, type Profile } from './planner';
+import type { AuditEntry, Item, ItemDraft, Project, ProjectPlan, SourceInfo } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
@@ -17,6 +18,22 @@ export interface DataSource {
   history(id: string): Promise<AuditEntry[]>;
   sources(id: string): Promise<SourceInfo[]>;
   subscribe(onChange: () => void): () => void;
+  profile(): Promise<Profile>;
+  saveProfile(p: Profile): Promise<void>;
+  projects(): Promise<{ projects: Project[]; plans: ProjectPlan[] }>;
+  createProject(d: ProjectDraft): Promise<Project>;
+  updateProject(id: string, patch: Partial<Project>): Promise<Project>;
+  deleteProject(id: string): Promise<void>;
+  /** Retire the old plan, trash its unfinished sessions and add the new ones, all at once. */
+  applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]): Promise<void>;
+  /** Ask the AI to break the project into milestones with hours. Throws if it is unavailable. */
+  estimate(input: { name: string; description: string; course: string | null; deadline: string | null }): Promise<{ milestones: { title: string; hours: number }[]; rationale: string }>;
+}
+
+export type ProjectDraft = Pick<Project, 'name' | 'description' | 'course' | 'deadline' | 'granularity'>;
+export interface PlanMeta {
+  deadline: string; total_minutes: number; buffer_pct: number; granularity: 'daily' | 'weekly'; made_by: 'ai' | 'manual';
+  milestones: { title: string; minutes: number; due?: string }[]; explanation: string[];
 }
 
 function must<T>(res: { data: T | null; error: { message: string } | null }): T {
@@ -52,6 +69,42 @@ class SupabaseSource implements DataSource {
   subscribe(onChange: () => void) {
     const ch = this.sb.channel('items-live').on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, onChange).subscribe();
     return () => void this.sb.removeChannel(ch);
+  }
+  async profile() {
+    const row = must(await this.sb.from('personal_profile').select('*').eq('user_id', this.userId).maybeSingle()) as Partial<Profile> | null;
+    return { ...DEFAULT_PROFILE, ...(row ?? {}), max_hours_per_day: Number(row?.max_hours_per_day ?? DEFAULT_PROFILE.max_hours_per_day) } as Profile;
+  }
+  async saveProfile(p: Profile) {
+    const { working_hours, blocks, max_hours_per_day, session_minutes, buffer_pct, energy, goals, notes } = p;
+    const stamp = { source: 'manual', confirmed_at: new Date().toISOString() };
+    must(await this.sb.from('personal_profile').upsert({ user_id: this.userId, working_hours, blocks, max_hours_per_day, session_minutes, buffer_pct, energy, goals: goals ?? null, notes: notes ?? null, field_meta: { working_hours: stamp, blocks: stamp, limits: stamp } }).select('user_id'));
+  }
+  async projects() {
+    const projects = must(await this.sb.from('projects').select('*').neq('status', 'archived').order('created_at')) as Project[];
+    const plans = must(await this.sb.from('project_plans').select('*').order('version')) as ProjectPlan[];
+    return { projects, plans };
+  }
+  async createProject(d: ProjectDraft) {
+    return must(await this.sb.from('projects').insert({ ...d, user_id: this.userId }).select('*').single()) as Project;
+  }
+  async updateProject(id: string, patch: Partial<Project>) {
+    return must(await this.sb.from('projects').update(patch).eq('id', id).select('*').single()) as Project;
+  }
+  async deleteProject(id: string) {
+    must(await this.sb.from('projects').delete().eq('id', id).select('id'));
+  }
+  async applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]) {
+    must(await this.sb.rpc('apply_plan', { p_project: projectId, p_plan: plan, p_sessions: sessions }));
+  }
+  async estimate(input: { name: string; description: string; course: string | null; deadline: string | null }) {
+    const { data, error } = await this.sb.functions.invoke('plan-project', { body: input });
+    if (error) {
+      let detail = error.message;
+      try { detail = (await (error as { context?: Response }).context?.json())?.error ?? detail; } catch { /* keep the generic message */ }
+      throw new Error(detail);
+    }
+    if (!data?.milestones?.length) throw new Error('The AI returned no plan');
+    return data as { milestones: { title: string; hours: number }[]; rationale: string };
   }
   /** Tell the server which timezone this device is in, so "by Friday" and the morning summary use it. */
   async reportTimezone() {
@@ -91,6 +144,41 @@ class DemoSource implements DataSource {
     return [{ source_type: 'email', link: null, subject: it.title.replace(/^(Attend|Submit|Pay|Reply to) /, 'Re: '), sender: 'Sample sender', received_at: it.created_at }];
   }
   subscribe() { return () => {}; }
+
+  private prof: Profile = DEFAULT_PROFILE;
+  private projs: Project[] = [];
+  private plans: ProjectPlan[] = [];
+  async profile() { return this.prof; }
+  async saveProfile(p: Profile) { this.prof = p; }
+  async projects() { return { projects: this.projs.filter((p) => p.status !== 'archived'), plans: this.plans }; }
+  async createProject(d: ProjectDraft) {
+    const p: Project = { ...d, id: `demo-proj-${Date.now()}`, status: 'open', current_plan_id: null, created_at: new Date().toISOString() };
+    this.projs.push(p);
+    return p;
+  }
+  async updateProject(id: string, patch: Partial<Project>) {
+    const i = this.projs.findIndex((p) => p.id === id);
+    this.projs[i] = { ...this.projs[i]!, ...patch };
+    return this.projs[i]!;
+  }
+  async deleteProject(id: string) {
+    this.projs = this.projs.filter((p) => p.id !== id);
+    this.items = this.items.filter((i) => i.project_id !== id);
+  }
+  async applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]) {
+    const now = Date.now(), t = new Date().toISOString();
+    const id = `demo-plan-${now}`;
+    const proj = this.projs.find((p) => p.id === projectId)!;
+    for (const pl of this.plans) if (pl.project_id === projectId && !pl.superseded_at) pl.superseded_at = t;
+    this.plans.push({ ...plan, id, project_id: projectId, version: this.plans.filter((p) => p.project_id === projectId).length + 1, sessions, created_at: t, superseded_at: null });
+    for (const it of this.items) if (it.project_id === projectId && it.origin === 'plan' && it.status === 'open' && Date.parse((it.start_at ?? it.due_at)!) > now) it.deleted_at = t;
+    sessions.forEach((s, k) => this.items.push({ ...this.items[0]!, ...s, id: `${id}-${k}`, origin: 'plan', project_id: projectId, plan_id: id, status: 'open', review_state: 'accepted', optional: false, all_day: false, due_precision: s.kind === 'task' ? 'date_only' : null, category: proj.course ? 'study' : 'work', course: proj.course, priority: 'medium', priority_reason: null, location: null, link: null, timezone: null, confidence: null, overridden_fields: [], ai_values: {}, actual_minutes: null, deleted_at: null, description: null, action_required: false, created_at: t, updated_at: t } as Item));
+    Object.assign(proj, { current_plan_id: id, deadline: plan.deadline, granularity: plan.granularity });
+  }
+  async estimate(input: { name: string }) {
+    await new Promise((r) => setTimeout(r, 900));
+    return { milestones: [{ title: 'Research and outline', hours: 2 }, { title: 'First draft', hours: 4 }, { title: 'Revise', hours: 2.5 }, { title: 'Proofread and submit', hours: 1 }], rationale: `A sample estimate for "${input.name}". With your own account, Claude sizes this from the description.` };
+  }
 }
 
 export function makeSource(userId: string | null): DataSource & { reportTimezone?: () => Promise<void> } {

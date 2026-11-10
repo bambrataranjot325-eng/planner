@@ -8,7 +8,7 @@ import { makeGmailApi } from './gmail/client.js';
 import { parseGmailMessage } from './gmail/parse.js';
 import { planSync } from './gmail/sync.js';
 import { cleanBody } from './pipeline/clean.js';
-import { formatAnchor } from './pipeline/dates.js';
+import { formatAnchor, pullBackYear } from './pipeline/dates.js';
 import { buildUserPrompt, extract, type ExtractInput } from './pipeline/extract.js';
 import { filterMessage, isBulk } from './pipeline/filter.js';
 import { makeLlm } from './pipeline/llm.js';
@@ -155,6 +155,10 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
       const knownIds = new Set(input.existing.map((e) => e.id));
       const link = gmailThreadLink(source.account, msg.threadId);
       for (const item of outcome.items) {
+        const z = item.timezone ?? timezone;
+        item.start_local = pullBackYear(item.start_local, msg.receivedAt, z);
+        item.end_local = pullBackYear(item.end_local, msg.receivedAt, z);
+        item.due_local = pullBackYear(item.due_local, msg.receivedAt, z);
         const row = toItemRow(item, timezone, models.review_below_confidence);
         const { action } = await applyItem(store, item, row, {
           knownIds,

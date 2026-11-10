@@ -132,9 +132,12 @@ interface DetailProps {
   onDelete: (item: Item) => void;
   onEdit: () => void;
   close: () => void;
+  projectName?: string;
 }
 
-export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: DetailProps) {
+export function ItemDetail({ item, data, mutate, onDelete, onEdit, close, projectName }: DetailProps) {
+  const [spent, setSpent] = useState(String(item.planned_minutes ?? 60));
+  const isSession = item.origin === 'plan';
   const [history, setHistory] = useState<AuditEntry[] | null>(null);
   const [sources, setSources] = useState<SourceInfo[] | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -155,7 +158,7 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: Deta
   });
 
   return (
-    <div className={`detail cat-${item.category}`}>
+    <div className={`detail cat-${item.category}${isSession ? ' is-session' : ''}`}>
       <header className="sheet-bar">
         <span className="detail-cat"><i />{CATEGORY_LABEL[item.category]}{item.course ? `, ${item.course}` : ''}</span>
         <button className="btn-round" onClick={close} aria-label="Close"><Close /></button>
@@ -189,7 +192,15 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: Deta
 
       {item.summary && <p className="detail-summary">{item.summary}</p>}
 
-      {item.status !== 'cancelled' && !item.optional && (
+      {isSession && !done && (
+        <div className="group">
+          <label className="field-row"><span>Minutes it took<small>Planned: {item.planned_minutes ?? 60}. Logging the real time improves later estimates.</small></span><input type="number" min={5} max={600} step={5} value={spent} onChange={(e) => setSpent(e.target.value)} aria-label="Minutes it took" /></label>
+        </div>
+      )}
+      {item.status !== 'cancelled' && !item.optional && isSession && !done && (
+        <button className="btn btn-wide is-fill" onClick={() => mutate(item.id, { status: 'done', actual_minutes: Math.max(5, Math.round(Number(spent) || item.planned_minutes || 60)) })}><Check size={16} /> Done</button>
+      )}
+      {item.status !== 'cancelled' && !item.optional && !(isSession && !done) && (
         <button className={`btn btn-wide${done || item.kind === 'event' ? '' : ' is-fill'}`} onClick={() => mutate(item.id, { status: done ? 'open' : 'done' })}>
           {done ? 'Mark as not done' : <><Check size={16} /> Mark as done</>}
         </button>
@@ -197,7 +208,8 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: Deta
 
       <div className="group">
         <div className="field-row"><span>Priority</span><em>{item.priority[0]!.toUpperCase() + item.priority.slice(1)}{item.priority_reason ? `, ${item.priority_reason.toLowerCase()}` : ''}</em></div>
-        <div className="field-row"><span>Came from</span><em>{ORIGIN_LABEL[item.origin]}</em></div>
+        <div className="field-row"><span>Came from</span><em>{isSession ? `Plan for ${projectName ?? 'a project'}` : ORIGIN_LABEL[item.origin]}</em></div>
+        {isSession && done && item.actual_minutes != null && <div className="field-row"><span>Time spent</span><em>{item.actual_minutes} minutes (planned {item.planned_minutes ?? 60})</em></div>}
         {item.link && <a className="field-row is-link" href={item.link} target="_blank" rel="noreferrer"><span>{item.origin === 'email' ? 'Open the email' : 'Open link'}</span></a>}
       </div>
 

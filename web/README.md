@@ -1,12 +1,12 @@
-# Planner web app (Phase 2, slice a)
+# Planner web app
 
-The calendar: Day, Week, Month and Agenda views, item details with history, add, edit, complete and
+The calendar and project planner: Day, Week, Month and Agenda views, a Projects tab, item details with history, add, edit, complete and
 delete, the Needs review queue, and filters. React with Vite, hosted on Vercel, installable as an app.
 
 ## Before deploying
 
 In the Supabase SQL editor, paste and run the contents of `supabase/migrations/0004_realtime_and_trash.sql`
-(and `0003_item_timezone.sql` and `0005_possible_items.sql` if you have not already).
+(and `0003_item_timezone.sql`, `0005_possible_items.sql` and `0006_projects.sql` if you have not already).
 
 ## Deploy (about 15 minutes, once)
 
@@ -50,6 +50,35 @@ Every later `git push` redeploys, and pull requests get their own preview addres
 - **Possible events:** dashed items are things you could go to, not plans. Open one and choose I'm going
   or Not interested. Untick "Possible events" in the sidebar to hide them all.
 - **Filters:** untick a category, course, source or priority to hide it. On a phone, the sliders button.
+
+## Projects
+
+The Projects tab turns a piece of work into a timeline. Describe it, give a deadline or ask for one to be
+suggested, and choose daily sessions or weekly targets. The app proposes milestones and work sessions;
+nothing goes on the calendar until you choose **Add to calendar**.
+
+- **Where sessions go:** only inside the hours in **Planning settings**, never on top of a calendar event,
+  a class you listed, or another project's session, and never more than your daily limit.
+- **Buffer:** the last part of the time before a deadline is left empty (20% by default).
+- **When things change:** if the deadline moves, a session is missed, or something new clashes, the project
+  shows "Needs a look" and offers **Replan what is left**. Nothing is replanned on its own.
+- **Versions:** every plan is kept. Older ones can be restored from the project's page.
+- **Time tracking:** when you finish a session, enter the minutes it really took. After three sessions, new
+  estimates are adjusted to your pace.
+
+### Setting up the AI estimate (once)
+
+The schedule is computed in the app. Only the "how many hours is this?" estimate uses AI, through a small
+Supabase Edge Function, so the API key never reaches the browser.
+
+1. Run `supabase/migrations/0006_projects.sql` in the SQL editor.
+2. In Supabase, open **Edge Functions**, choose **Deploy a new function > Via Editor**, name it exactly
+   `plan-project`, replace the sample code with the contents of `supabase/functions/plan-project/index.ts`,
+   and deploy.
+3. Open **Edge Functions > Secrets** and add `ANTHROPIC_API_KEY` with your key.
+
+Each estimate costs about a cent and counts toward the same monthly cap as email. Without the function,
+projects still work: enter the hours yourself and choose **Plan with my hours**.
 
 ## Try it without an account
 

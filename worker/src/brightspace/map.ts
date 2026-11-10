@@ -29,8 +29,8 @@ const PRIORITY: Record<string, { p: 'high' | 'medium' | 'low'; why: string }> = 
 function courseOf(location: string): string | null {
   const loc = location.trim();
   if (!loc) return null;
-  const code = loc.match(/\b[A-Z]{2,5}-[A-Z]{2}\s?\d{3,4}\b/); // e.g. CS-UY 1134
-  return (code ? code[0] : loc).slice(0, 60);
+  const code = loc.match(/\b[A-Z]{2,6}-[A-Z]{2}[\s-]?\d{1,4}\b/); // e.g. CS-UY 1134, EXPOS-UY 1
+  return (code ? code[0] : loc).slice(0, 100);
 }
 
 function summaryOf(e: IcsEvent, type: string): string {
@@ -50,6 +50,7 @@ function summaryOf(e: IcsEvent, type: string): string {
  *  "X - Due"                      a task due then
  *  "X - Availability Ends" / End  a task, only when X has no "Due" entry of its own
  *  "X - Available" / Starts       ignored (it only says when X opens)
+ *  no label, zero length          a task due then (how discussion deadlines appear)
  *  anything else                  an event (a class meeting, an exam sitting, a course event)
  * Things dated more than a day ago are left out.
  */
@@ -73,7 +74,10 @@ export function mapFeed(events: IcsEvent[], zone: string, now: Date): { items: F
     if (!start || !start.isValid) { skip('no_date'); continue; }
 
     const type = classify(e);
-    const isTask = suffix === 'due' || closes;
+    // NYU's feed lists discussion deadlines with no "- Due" label: a timed entry that starts and ends at the
+    // same instant is a deadline, not something with a duration.
+    const instant = !suffix && !e.allDay && !!e.dtend && e.dtend === e.dtstart;
+    const isTask = suffix === 'due' || closes || instant;
     const pr = PRIORITY[type]!;
     const link = e.description.match(/https?:\/\/[^\s\\]+/)?.[0] ?? null;
     let start_at: string | null = null, end_at: string | null = null, due_at: string | null = null;

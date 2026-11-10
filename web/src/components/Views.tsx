@@ -25,7 +25,7 @@ function TaskCircle({ item, onToggle }: { item: Item; onToggle: (i: Item) => voi
 }
 
 function cls(item: Item, base: string) {
-  return `${base} cat-${item.category}${item.status === 'done' ? ' is-done' : ''}${item.status === 'cancelled' ? ' is-cancelled' : ''}${item.kind === 'task' ? ' is-task' : ''}${item.optional ? ' is-optional' : ''}`;
+  return `${base} cat-${item.category}${item.status === 'done' ? ' is-done' : ''}${item.status === 'cancelled' ? ' is-cancelled' : ''}${item.kind === 'task' ? ' is-task' : ''}${item.optional ? ' is-optional' : ''}${item.origin === 'plan' ? ' is-session' : ''}`;
 }
 
 /** Day and week views: an all-day strip above an hour grid. */

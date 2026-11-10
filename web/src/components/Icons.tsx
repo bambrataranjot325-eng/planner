@@ -15,4 +15,5 @@ export const Tray = () => <Svg><path d="M3 13l2.5-7.5h13L21 13v5a1.5 1.5 0 01-1.
 export const IconToday = () => <Svg size={22}><rect x="4" y="5" width="16" height="15" rx="3" /><path d="M4 10h16M8.5 3v4M15.5 3v4" /><circle cx="12" cy="15" r="1.2" fill="currentColor" /></Svg>;
 export const IconWeek = () => <Svg size={22}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M9 5v14M15 5v14" /></Svg>;
 export const IconMonth = () => <Svg size={22}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9.5h18M3 14.5h18M9 9.5V20M15 9.5V20" /></Svg>;
+export const IconProjects = () => <Svg size={22}><path d="M4 6.5h9M4 12h13M4 17.5h6" /><circle cx="17" cy="6.5" r="1.6" /><circle cx="20" cy="12" r="0" /><circle cx="14" cy="17.5" r="1.6" /></Svg>;
 export const IconAgenda = () => <Svg size={22}><path d="M8.5 7h11M8.5 12h11M8.5 17h11" /><circle cx="4.5" cy="7" r="1" fill="currentColor" /><circle cx="4.5" cy="12" r="1" fill="currentColor" /><circle cx="4.5" cy="17" r="1" fill="currentColor" /></Svg>;

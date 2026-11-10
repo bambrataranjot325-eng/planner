@@ -2,8 +2,8 @@ export type Kind = 'event' | 'task';
 export type Priority = 'high' | 'medium' | 'low';
 export type Category = 'work' | 'study' | 'personal' | 'finance' | 'health' | 'admin' | 'other';
 export type Status = 'open' | 'done' | 'snoozed' | 'dismissed' | 'cancelled';
-export type Origin = 'email' | 'brightspace' | 'claude_chat' | 'manual';
-export type ViewName = 'today' | 'week' | 'month' | 'agenda';
+export type Origin = 'email' | 'brightspace' | 'claude_chat' | 'manual' | 'plan';
+export type ViewName = 'today' | 'week' | 'month' | 'agenda' | 'projects';
 
 export interface Item {
   id: string;
@@ -31,6 +31,11 @@ export interface Item {
   review_state: 'needs_review' | 'accepted';
   origin: Origin;
   link: string | null;
+  /** Set on work sessions (origin 'plan') and on items linked to a project. */
+  project_id?: string | null;
+  plan_id?: string | null;
+  planned_minutes?: number | null;
+  actual_minutes?: number | null;
   overridden_fields: string[];
   ai_values: Record<string, unknown>;
   deleted_at: string | null;
@@ -73,5 +78,33 @@ export const NO_FILTERS: Filters = { hiddenOrigins: [], hiddenCategories: [], hi
 
 export const CATEGORIES: Category[] = ['study', 'work', 'personal', 'finance', 'health', 'admin', 'other'];
 export const PRIORITIES: Priority[] = ['high', 'medium', 'low'];
-export const ORIGIN_LABEL: Record<Origin, string> = { email: 'Email', brightspace: 'Brightspace', claude_chat: 'Claude chats', manual: 'Added by me' };
+export const ORIGIN_LABEL: Record<Origin, string> = { email: 'Email', brightspace: 'Brightspace', claude_chat: 'Claude chats', manual: 'Added by me', plan: 'Project plans' };
 export const CATEGORY_LABEL: Record<Category, string> = { study: 'Study', work: 'Work', personal: 'Personal', finance: 'Finance', health: 'Health', admin: 'Admin', other: 'Other' };
+
+export interface ProjectPlan {
+  id: string;
+  project_id: string;
+  version: number;
+  deadline: string;
+  total_minutes: number;
+  buffer_pct: number;
+  granularity: 'daily' | 'weekly';
+  made_by: 'ai' | 'manual';
+  milestones: { title: string; minutes: number; due?: string }[];
+  sessions: { title: string; summary: string | null; kind: 'event' | 'task'; start_at: string | null; end_at: string | null; due_at: string | null; planned_minutes: number }[];
+  explanation: string[];
+  created_at: string;
+  superseded_at: string | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  course: string | null;
+  deadline: string | null;
+  granularity: 'daily' | 'weekly';
+  status: 'open' | 'done' | 'archived';
+  current_plan_id: string | null;
+  created_at: string;
+}

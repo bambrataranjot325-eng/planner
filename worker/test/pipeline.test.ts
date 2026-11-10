@@ -617,3 +617,43 @@ describe('possible items', () => {
     expect(p).toContain('at most the 6 possibles');
   });
 });
+
+import { pullBackYear } from '../src/pipeline/dates.js';
+describe('a just-passed date is not pushed into next year', () => {
+  const received = new Date('2026-11-10T04:00:00Z');
+  it('pulls "9 Nov next year" back when the email arrived on 10 Nov (seen in the NYU dry-run)', () => {
+    expect(pullBackYear('2027-11-09', received, SYD)).toBe('2026-11-09');
+    expect(pullBackYear('2027-10-13T17:00', received, SYD)).toBe('2026-10-13T17:00');
+  });
+  it('leaves genuine next-year dates, this-year dates and empty values alone', () => {
+    expect(pullBackYear('2027-01-17', received, SYD)).toBe('2027-01-17'); // January check-in really is next year
+    expect(pullBackYear('2027-05-04', received, SYD)).toBe('2027-05-04');
+    expect(pullBackYear('2027-11-20', received, SYD)).toBe('2027-11-20'); // 20 Nov has not happened yet this year, so the model meant it
+    expect(pullBackYear('2026-11-13', received, SYD)).toBe('2026-11-13');
+    expect(pullBackYear(null, received, SYD)).toBeNull();
+  });
+});
+
+describe('brightspace: shapes seen in the real NYU feed', () => {
+  const NOW = new Date('2026-11-10T04:00:00Z');
+  const ev = (over: Record<string, unknown>) => ({ uid: 'u1', summary: 'X', description: '', location: 'L', dtstart: '20261120T045959Z', dtend: '20261120T045959Z', allDay: false, tzid: null, fields: [], ...over }) as any;
+  it('a discussion deadline with no "- Due" label is a task, not a zero-length event', () => {
+    const { items } = mapFeed([ev({ summary: 'Introduce yourself to the cohort', description: 'Post 2-3 sentences.\n\nDiscussions:\nIntroduce yourself - https://b.example/d2l/le/1/discussions/topics/2/View', location: 'Global Leaders and Scholars in STEM (GLASS) Sophomore Seminar' })], SYD, NOW);
+    expect(items[0]!.row).toMatchObject({ kind: 'task', due_at: '2026-11-20T04:59:59Z', priority: 'low', course: 'Global Leaders and Scholars in STEM (GLASS) Sophomore Seminar' });
+  });
+  it('an all-day entry or one with a real duration is still an event', () => {
+    expect(mapFeed([ev({ summary: 'Spring 2027 Classes Begin', dtstart: '20270125', dtend: '20270126', allDay: true })], SYD, NOW).items[0]!.row.kind).toBe('event');
+    expect(mapFeed([ev({ summary: 'Review session', dtend: '20261120T060000Z' })], SYD, NOW).items[0]!.row.kind).toBe('event');
+  });
+  it('"Final Exam Period - May 11th - May 17th" keeps its whole title and spans the days', () => {
+    const it2 = mapFeed([ev({ summary: 'Final Exam Period - May 11th - May 17th', dtstart: '20270511', dtend: '20270517', allDay: true })], NY, NOW).items[0]!;
+    expect(it2.row).toMatchObject({ title: 'Final Exam Period - May 11th - May 17th', kind: 'event', all_day: true, priority: 'high', end_at: '2027-05-17T03:59:00Z' });
+  });
+  it('course codes: the short code when there is one', () => {
+    const course = (location: string) => mapFeed([ev({ summary: 'HW - Due', location })], NY, NOW).items[0]!.row.course;
+    expect(course('CS-UY 1134 - Spring 2026')).toBe('CS-UY 1134');
+    expect(course('CS-UY 1122 - S26 - Introduction to Computer Science')).toBe('CS-UY 1122');
+    expect(course('EXPOS-UY 1 2025 Fall 125 143-144')).toBe('EXPOS-UY 1');
+    expect(course('Info Technology in Business & Society Fall 2026')).toBe('Info Technology in Business & Society Fall 2026');
+  });
+});

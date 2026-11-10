@@ -162,7 +162,8 @@ export class DbItemStore implements ItemStore {
 
   async context(threadKey: string, zone: string, since: Date): Promise<ExistingItem[]> {
     const cols = 'id, title, kind, start_at, due_at, timezone';
-    const base = () => this.db.sb.from('items').select(cols).eq('user_id', this.db.userId).is('deleted_at', null);
+    // Project work sessions are not shown to the email model: an email should never "update" one.
+    const base = () => this.db.sb.from('items').select(cols).eq('user_id', this.db.userId).is('deleted_at', null).neq('origin', 'plan');
     const thread = check(await base().eq('thread_key', threadKey), 'read thread items') ?? [];
     const iso = since.toISOString();
     const open =
@@ -178,7 +179,7 @@ export class DbItemStore implements ItemStore {
 
   async nearby(row: ItemRow): Promise<Candidate[]> {
     const cols = 'id, title, kind, start_at, due_at';
-    const base = () => this.db.sb.from('items').select(cols).eq('user_id', this.db.userId).eq('kind', row.kind).is('deleted_at', null);
+    const base = () => this.db.sb.from('items').select(cols).eq('user_id', this.db.userId).eq('kind', row.kind).is('deleted_at', null).neq('origin', 'plan');
     const date = row.start_at ?? row.due_at;
     if (date) {
       const lo = new Date(Date.parse(date) - 24 * 3_600_000).toISOString();
