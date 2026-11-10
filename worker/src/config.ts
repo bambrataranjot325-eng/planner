@@ -17,6 +17,7 @@ export type ModelSpec = z.infer<typeof ModelSpec>;
 const Models = z.object({
   prompt_version: z.string(),
   first_pass: ModelSpec,
+  bulk: ModelSpec.optional(), // cheaper model for newsletters and list mail
   escalation: ModelSpec,
   escalate_below_confidence: z.number(),
   review_below_confidence: z.number(),

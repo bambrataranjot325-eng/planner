@@ -27,7 +27,7 @@ export const ExtractedItem = z.object({
 });
 export type ExtractedItem = z.infer<typeof ExtractedItem>;
 
-export const ExtractionResult = z.object({ items: z.array(ExtractedItem).max(10) });
+export const ExtractionResult = z.object({ items: z.array(ExtractedItem).max(30) });
 export type ExtractionResult = z.infer<typeof ExtractionResult>;
 
 /** Parse a model reply. Returns the validated result or a short error to feed back on retry. */

@@ -143,8 +143,12 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
 - **What is sent:** sender, subject, received date in your timezone, and the body with quoted replies
   and signatures removed, truncated at 6,000 characters. Card numbers, passwords, account numbers and
   one-time codes are masked first. No attachments.
-- **Two models:** the cheap model goes first. A reply that is malformed is retried once. If it is still
-  malformed, or the model is under 0.75 confident about any item, the stronger model is asked.
+- **Two models:** mail from a person goes to the stronger model. Newsletters, digests and list mail go
+  to a cheaper one under a stricter rule: only obligations (deadlines, required forms, payments, exams)
+  become items, never optional events or postings. A malformed reply is retried once, then the stronger
+  model is asked.
+- **Blocking a sender:** add a row to `sender_rules`. `@shop.com` blocks a domain, `news@shop.com` an
+  address, and a word with no @ (such as `WSJ`) blocks any sender whose name contains it.
 - **Review queue:** items under 0.6 confidence, and cancellations, are saved with
   `review_state = 'needs_review'` and stay off the calendar until accepted.
 - **No duplicates:** each email is shown the items already on the calendar (its own thread's, plus other
@@ -166,7 +170,7 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
 ## Tests
 
 ```
-make test                 # 98 unit tests
+make test                 # 104 unit tests
 ./scripts/test-sql.sh     # needs a local Postgres; runs the migration and the security tests
 ```
 

@@ -7,7 +7,7 @@ import { Db } from './db.js';
 import { utcToLocal } from './pipeline/dates.js';
 import { authCommand } from './cli/auth.js';
 import { evalFixtures, previewFixtures } from './cli/fixtures.js';
-import { runOnce } from './run.js';
+import { requestStop, runOnce } from './run.js';
 
 const HEARTBEAT = '/tmp/planner-heartbeat';
 
@@ -25,7 +25,12 @@ async function main(): Promise<void> {
 
   const env = loadEnv();
   if (cmd === 'auth') return authCommand(env);
-  if (cmd === 'once') return runOnce(env);
+  if (cmd === 'once') {
+    // Without these, Ctrl+C is ignored inside a container and a forced stop would lose the report.
+    process.on('SIGINT', requestStop);
+    process.on('SIGTERM', requestStop);
+    return runOnce(env);
+  }
   if (cmd === 'brightspace-report') {
     if (!env.BRIGHTSPACE_FEED_URL) throw new Error('Set BRIGHTSPACE_FEED_URL in .env first');
     const res = await fetch(env.BRIGHTSPACE_FEED_URL, { signal: AbortSignal.timeout(30_000) });
@@ -68,8 +73,8 @@ async function main(): Promise<void> {
   if (cmd === 'loop') {
     log('worker_started', { mode: env.MODE, poll_minutes: env.POLL_MINUTES });
     let stopping = false;
-    process.on('SIGTERM', () => { stopping = true; });
-    process.on('SIGINT', () => { stopping = true; });
+    process.on('SIGTERM', () => { stopping = true; requestStop(); });
+    process.on('SIGINT', () => { stopping = true; requestStop(); });
     while (!stopping) {
       try {
         await runOnce(env);

@@ -10,12 +10,16 @@ import { planSync } from './gmail/sync.js';
 import { cleanBody } from './pipeline/clean.js';
 import { formatAnchor } from './pipeline/dates.js';
 import { buildUserPrompt, extract, type ExtractInput } from './pipeline/extract.js';
-import { filterMessage } from './pipeline/filter.js';
+import { filterMessage, isBulk } from './pipeline/filter.js';
 import { makeLlm } from './pipeline/llm.js';
 import { redact } from './pipeline/redact.js';
 import { renderDryRun, type ReportEntry } from './pipeline/report.js';
 import { applyItem, MemoryStore, type ItemStore } from './pipeline/store.js';
 import { gmailThreadLink, toItemRow } from './pipeline/write.js';
+
+/** Set by Ctrl+C or `docker stop`: finish the current email, write the report, then exit cleanly. */
+let stopRequested = false;
+export const requestStop = () => { stopRequested = true; };
 
 function stamp(): string {
   return new Date().toISOString().replace(/[-:]/g, '').slice(0, 15); // to the second, so reports never overwrite each other
@@ -28,9 +32,10 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
   const llm = {
     firstPass: makeLlm(models.first_pass, { groq: env.GROQ_API_KEY, anthropic: env.ANTHROPIC_API_KEY }),
     escalation: makeLlm(models.escalation, { groq: env.GROQ_API_KEY, anthropic: env.ANTHROPIC_API_KEY }),
+    bulk: models.bulk ? makeLlm(models.bulk, { groq: env.GROQ_API_KEY, anthropic: env.ANTHROPIC_API_KEY }) : undefined,
   };
   const { timezone, capUsd } = await db.settings(env.DEFAULT_TIMEZONE);
-  const stats = { kind: '', listed: 0, already_done: 0, scanned: 0, skipped: 0, sent_to_llm: 0, escalated: 0, failed: 0, items_created: 0, items_updated: 0, items_merged: 0, items_completed: 0, items_cancelled: 0, skipped_past: 0, needs_review: 0, cost_usd: 0, capped: false };
+  const stats = { kind: '', listed: 0, already_done: 0, scanned: 0, skipped: 0, sent_to_llm: 0, escalated: 0, failed: 0, items_created: 0, items_updated: 0, sent_bulk: 0, items_merged: 0, items_completed: 0, items_cancelled: 0, skipped_past: 0, needs_review: 0, cost_usd: 0, capped: false };
   const runId = mode === 'preview' ? null : await db.startRun(source.id, mode);
   let runError: string | null = null;
   const report: ReportEntry[] = [];
@@ -65,6 +70,11 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
     let completed = true;
 
     for (const id of ids) {
+      if (stopRequested) {
+        completed = false; // the sync position is not advanced, so nothing is skipped next time
+        trialNote = [trialNote, `Stopped by you after ${stats.scanned} emails.`].filter(Boolean).join(' ');
+        break;
+      }
       const raw = await api.getMessage(id);
       if (!raw) continue;
       const msg = parseGmailMessage(raw);
@@ -103,6 +113,7 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
         subject,
         receivedAnchor: formatAnchor(msg.receivedAt, timezone),
         body,
+        bulk: isBulk(msg, source.account),
         existing: mode === 'preview' ? [] : await store.context(threadKey, timezone, new Date(msg.receivedAt.getTime() - 3 * 86_400_000)),
       };
 
@@ -125,6 +136,7 @@ async function runSource(env: Env, db: Db, source: SourceRow): Promise<void> {
 
       const outcome = await extract(input, system, models, llm);
       stats.sent_to_llm++;
+      if (input.bulk) stats.sent_bulk++;
       if (outcome.escalated) stats.escalated++;
       const cost = outcome.usage.reduce((s, u) => s + u.estCostUsd, 0);
       spent += cost;

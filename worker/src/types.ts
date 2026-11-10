@@ -30,6 +30,10 @@ export interface ExistingItem {
 
 export interface LlmCall {
   text: string;
+  /** Billed at the cached rate (the fixed instructions, re-read from cache). */
+  cacheReadTokens?: number;
+  /** Billed at the cache-write rate (the first time the instructions are stored). */
+  cacheWriteTokens?: number;
   inputTokens: number;
   outputTokens: number;
 }

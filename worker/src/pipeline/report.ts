@@ -25,7 +25,8 @@ function when(row: ItemRow, zone: string): string {
   const dt = DateTime.fromISO(iso, { zone: 'utc' }).setZone(row.timezone ?? zone);
   const label = row.kind === 'event' ? 'starts' : 'due';
   const place = row.timezone && row.timezone !== zone ? ` ${row.timezone.split('/').pop()!.replace(/_/g, ' ')} time` : '';
-  return `${label} ${dt.toFormat(row.all_day || row.due_precision === 'date_only' ? 'ccc d LLL' : 'ccc d LLL, h:mm a')}${place}${row.due_precision === 'approximate' ? ' (approx.)' : ''}`;
+  const day = dt.year === DateTime.now().year ? 'ccc d LLL' : 'ccc d LLL yyyy';
+  return `${label} ${dt.toFormat(row.all_day || row.due_precision === 'date_only' ? day : `${day}, h:mm a`)}${place}${row.due_precision === 'approximate' ? ' (approx.)' : ''}`;
 }
 
 /** The dry-run report: what would be created, without creating it. No email bodies. */

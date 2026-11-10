@@ -539,3 +539,48 @@ describe('brightspace sync', () => {
     expect(t.store.items).toHaveLength(0);
   });
 });
+
+import { isBulk } from '../src/pipeline/filter.js';
+
+describe('bulk mail', () => {
+  const me = 'tsb5911@nyu.edu';
+  const msg = (from: string, headers: Record<string, string> = {}) => ({ id: 'x', threadId: 'x', labels: ['INBOX'], headers, from, subject: 's', receivedAt: new Date(), bodyText: 'b' });
+  it('recognises newsletters, list mail, no-reply senders and mail not addressed to me', () => {
+    expect(isBulk(msg('Tandon GLASS <glass@nyu.edu>', { 'list-unsubscribe': '<x>' }), me)).toBe(true);
+    expect(isBulk(msg('Club <club@nyu.edu>', { 'list-id': '<club.nyu.edu>' }), me)).toBe(true);
+    expect(isBulk(msg('Brightspace <noreply@mail.brightspace.nyu.edu>', { to: me }), me)).toBe(true);
+    expect(isBulk(msg('NYU Sydney <sydney@nyu.edu>', { to: 'sydney-students@nyu.edu' }), me)).toBe(true);
+    expect(isBulk(msg('Dean <dean@nyu.edu>', { precedence: 'bulk', to: me }), me)).toBe(true);
+  });
+  it('treats mail from a person to me as personal', () => {
+    expect(isBulk(msg('Jessica Pascual <jp@nyu.edu>', { to: `Taranjot <${me}>` }), me)).toBe(false);
+    expect(isBulk(msg('Alisa <alisa@nyu.edu>', { to: 'someone@nyu.edu', cc: me.toUpperCase() }), me)).toBe(false);
+    expect(isBulk(msg('Mom <mom@family.example>'), me)).toBe(false); // no To header to judge by
+  });
+  it('sends bulk mail to the cheaper model and tells the model it is bulk', async () => {
+    const models = { ...loadModels(), escalate_below_confidence: 0 };
+    const used: string[] = [];
+    const fn = (name: string) => async (_s: string, user: string) => { used.push(`${name}:${/Bulk mail: (yes|no)/.exec(user)![1]}`); return { text: '{"items":[]}', inputTokens: 100, outputTokens: 10 }; };
+    const llm = { firstPass: fn('sonnet'), escalation: fn('sonnet'), bulk: fn('haiku') };
+    const base = { from: 'a', subject: 's', receivedAnchor: 'r', body: 'b', existing: [] };
+    const bulk = await extract({ ...base, bulk: true }, 'sys', models, llm);
+    await extract({ ...base, bulk: false }, 'sys', models, llm);
+    expect(used).toEqual(['haiku:yes', 'sonnet:no']);
+    expect(bulk.usage[0]).toMatchObject({ purpose: 'extract_bulk', model: models.bulk!.model });
+  });
+  it('a block rule without an @ matches the sender name', () => {
+    const wsj = { ...msg('"Emma Tucker, WSJ" <access@interactive.wsj.com>'), labels: ['INBOX'] };
+    expect(filterMessage(wsj, [{ pattern: 'WSJ', action: 'block' }])).toEqual({ decision: 'skip', reason: 'sender_blocklist' });
+    expect(filterMessage(wsj, [{ pattern: 'Handshake', action: 'block' }]).decision).toBe('pass');
+  });
+  it('cached instructions cost a tenth to re-read', () => {
+    const spec = { provider: 'anthropic' as const, model: 'm', usd_per_mtok_in: 3, usd_per_mtok_out: 15 };
+    expect(estimateCost(spec, 1000, 0, 2000, 0)).toBeCloseTo((1000 + 200) * 3 / 1e6, 10);
+    expect(estimateCost(spec, 1000, 0, 0, 2000)).toBeCloseTo((1000 + 2500) * 3 / 1e6, 10);
+  });
+  it('the current prompt has the obligations-only rule and the advert rule', () => {
+    const p = loadPrompt(loadModels().prompt_version);
+    expect(p).toContain('Extract only OBLIGATIONS');
+    expect(p).toContain('is marketing: zero items');
+  });
+});

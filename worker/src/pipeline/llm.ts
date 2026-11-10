@@ -54,16 +54,25 @@ export function makeLlm(spec: ModelSpec, keys: { groq?: string; anthropic?: stri
     const data = await postJson(
       'https://api.anthropic.com/v1/messages',
       { 'x-api-key': keys.anthropic, 'anthropic-version': '2023-06-01' },
-      { model: spec.model, max_tokens: 1500, system, messages: [{ role: 'user', content: user }] },
+      // The instructions are identical for every email, so they are cached and re-read at a tenth of the price.
+      { model: spec.model, max_tokens: 4096, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: user }] },
     );
     const text = (data.content ?? [])
       .filter((b: any) => b.type === 'text')
       .map((b: any) => b.text)
       .join('');
-    return { text, inputTokens: data.usage?.input_tokens ?? 0, outputTokens: data.usage?.output_tokens ?? 0 };
+    return {
+      text,
+      inputTokens: data.usage?.input_tokens ?? 0,
+      cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
+      outputTokens: data.usage?.output_tokens ?? 0,
+    };
   };
 }
 
-export function estimateCost(spec: ModelSpec, inputTokens: number, outputTokens: number): number {
-  return (inputTokens * spec.usd_per_mtok_in + outputTokens * spec.usd_per_mtok_out) / 1_000_000;
+/** Cached instructions are billed at 0.1x the input price when read and 1.25x when first stored. */
+export function estimateCost(spec: ModelSpec, inputTokens: number, outputTokens: number, cacheReadTokens = 0, cacheWriteTokens = 0): number {
+  const input = inputTokens + cacheReadTokens * 0.1 + cacheWriteTokens * 1.25;
+  return (input * spec.usd_per_mtok_in + outputTokens * spec.usd_per_mtok_out) / 1_000_000;
 }

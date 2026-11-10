@@ -1,10 +1,16 @@
 {
-  "prompt_version": "extract.v3",
+  "prompt_version": "extract.v4",
   "first_pass": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-6",
     "usd_per_mtok_in": 3.0,
     "usd_per_mtok_out": 15.0
+  },
+  "bulk": {
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "usd_per_mtok_in": 1.0,
+    "usd_per_mtok_out": 5.0
   },
   "escalation": {
     "provider": "anthropic",

@@ -24,10 +24,27 @@ function senderAddress(from: string): string {
   return (m ? m[1]! : from).trim().toLowerCase();
 }
 
-function matchesRule(addr: string, pattern: string): boolean {
+/** "@shop.com" matches a domain, "news@shop.com" an address, and anything without an @ matches the sender's name. */
+function matchesRule(addr: string, pattern: string, from: string): boolean {
   const p = pattern.trim().toLowerCase();
   if (!p) return false;
+  if (!p.includes('@')) return from.toLowerCase().includes(p);
   return p.startsWith('@') ? addr.endsWith(p) : addr === p;
+}
+
+/**
+ * Mass mail: newsletters, digests, announcements to a list. It is still read, because a housing or
+ * registration deadline can arrive this way, but by the cheaper model and under a stricter rule
+ * (obligations only, no optional events).
+ */
+export function isBulk(msg: ParsedMessage, account: string): boolean {
+  const h = msg.headers;
+  if (h['list-unsubscribe'] || h['list-id']) return true;
+  if (/bulk|list|junk/i.test(h['precedence'] ?? '')) return true;
+  if (/\b(no-?reply|do-?not-?reply|newsletter|digest|notifications?|mailer|announce)/i.test(senderAddress(msg.from))) return true;
+  const to = `${h['to'] ?? ''} ${h['cc'] ?? ''}`.toLowerCase();
+  if (account && to.trim() && !to.includes(account.toLowerCase())) return true; // sent to a list address, not to me
+  return false;
 }
 
 /** Cheap rules that run before any LLM call. Order matters. */
@@ -37,8 +54,8 @@ export function filterMessage(msg: ParsedMessage, rules: SenderRule[] = []): Fil
   if (!labels.has('INBOX')) return { decision: 'skip', reason: 'not_inbox' };
 
   const addr = senderAddress(msg.from);
-  if (rules.some((r) => r.action === 'allow' && matchesRule(addr, r.pattern))) return { decision: 'pass', reason: 'sender_allowlist' };
-  if (rules.some((r) => r.action === 'block' && matchesRule(addr, r.pattern))) return { decision: 'skip', reason: 'sender_blocklist' };
+  if (rules.some((r) => r.action === 'allow' && matchesRule(addr, r.pattern, msg.from))) return { decision: 'pass', reason: 'sender_allowlist' };
+  if (rules.some((r) => r.action === 'block' && matchesRule(addr, r.pattern, msg.from))) return { decision: 'skip', reason: 'sender_blocklist' };
 
   if (labels.has('CATEGORY_PROMOTIONS')) return { decision: 'skip', reason: 'gmail_promotions' };
   if (labels.has('CATEGORY_SOCIAL')) return { decision: 'skip', reason: 'gmail_social' };

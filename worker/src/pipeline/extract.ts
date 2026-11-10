@@ -9,6 +9,7 @@ export interface ExtractInput {
   receivedAnchor: string; // "Tuesday 2026-11-10 14:05 (America/New_York)"
   body: string; // cleaned and redacted
   existing: ExistingItem[];
+  bulk?: boolean; // newsletter, digest or list mail
 }
 
 export interface ExtractOutcome {
@@ -30,6 +31,7 @@ export function buildUserPrompt(input: ExtractInput): string {
     `From: ${input.from}`,
     `Subject: ${input.subject}`,
     `Received: ${input.receivedAnchor}`,
+    `Bulk mail: ${input.bulk ? 'yes' : 'no'}`,
     '',
     'Existing items (this thread, and other open items):',
     existing,
@@ -56,9 +58,9 @@ async function runModel(
       provider: spec.provider,
       model: spec.model,
       purpose: attempt === 0 ? purpose : `${purpose}_retry`,
-      inputTokens: res.inputTokens,
+      inputTokens: res.inputTokens + (res.cacheReadTokens ?? 0) + (res.cacheWriteTokens ?? 0),
       outputTokens: res.outputTokens,
-      estCostUsd: estimateCost(spec, res.inputTokens, res.outputTokens),
+      estCostUsd: estimateCost(spec, res.inputTokens, res.outputTokens, res.cacheReadTokens, res.cacheWriteTokens),
     });
     const parsed = parseExtraction(res.text);
     if (parsed.ok) return { items: parsed.value.items };
@@ -76,13 +78,15 @@ export async function extract(
   input: ExtractInput,
   system: string,
   models: Models,
-  llm: { firstPass: LlmFn; escalation: LlmFn },
+  llm: { firstPass: LlmFn; escalation: LlmFn; bulk?: LlmFn },
 ): Promise<ExtractOutcome> {
   const usage: UsageRecord[] = [];
   const user = buildUserPrompt(input);
   let first: { items: ExtractedItem[] | null; error?: string };
   try {
-    first = await runModel(llm.firstPass, models.first_pass, 'extract', system, user, usage);
+    // Mass mail goes to the cheaper model when one is configured.
+    const cheap = input.bulk && llm.bulk && models.bulk;
+    first = cheap ? await runModel(llm.bulk!, models.bulk!, 'extract_bulk', system, user, usage) : await runModel(llm.firstPass, models.first_pass, 'extract', system, user, usage);
   } catch (e) {
     first = { items: null, error: (e as Error).message };
   }

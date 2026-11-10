@@ -3,6 +3,7 @@ services:
     build: ./worker
     env_file: .env
     restart: unless-stopped
+    init: true   # forwards Ctrl+C and stop signals to the worker
     # No ports: the worker only makes outbound calls (Gmail, Supabase, the AI providers).
     volumes:
       - ./reports:/app/reports
