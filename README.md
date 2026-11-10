@@ -25,7 +25,7 @@ calendar items. Phase 1 has no app yet: you look at results in a report file and
 
 ### 1. Supabase
 
-1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql`, `0004_realtime_and_trash.sql`, `0005_possible_items.sql` and `0006_projects.sql` (the file contents, not the file names).
+1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql`, `0004_realtime_and_trash.sql`, `0005_possible_items.sql`, `0006_projects.sql` and `0007_project_links.sql` (the file contents, not the file names).
 2. **Authentication > Users > Add user**: create a user with your email. Copy its **UID**.
 3. **Project Settings > API**: copy the project URL and the secret (service role) key.
 

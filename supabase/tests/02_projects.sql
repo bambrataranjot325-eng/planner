@@ -51,3 +51,18 @@ do $$ begin
   exception when insufficient_privilege then raise notice 'RLS ok: signed-out visitors cannot call apply_plan'; end;
 end $$;
 reset role;
+
+-- attached items survive a project being deleted; its sessions do not
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+do $$ declare kept int; sessions int; linked uuid; begin
+  update items set project_id = '11111111-0000-0000-0000-000000000001' where origin = 'email' returning id into linked;
+  if linked is null then raise exception 'LINK FAIL: no email item to attach'; end if;
+  perform delete_project('11111111-0000-0000-0000-000000000001');
+  select count(*) into kept from items where id = linked and project_id is null;
+  select count(*) into sessions from items where origin = 'plan';
+  if kept <> 1 or sessions <> 0 then raise exception 'DELETE FAIL: kept=% sessions_left=%', kept, sessions; end if;
+  if exists (select 1 from projects) then raise exception 'DELETE FAIL: project still there'; end if;
+  raise notice 'Delete ok: the attached email item was kept and unlinked, the sessions were removed';
+end $$;
+reset role; reset request.jwt.claim.sub;

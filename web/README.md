@@ -57,6 +57,9 @@ The Projects tab turns a piece of work into a timeline. Describe it, give a dead
 suggested, and choose daily sessions or weekly targets. The app proposes milestones and work sessions;
 nothing goes on the calendar until you choose **Add to calendar**.
 
+- **Related items:** attach the deadline, exam or emails a project is about, either while creating it or
+  from any item's page with **Plan this as a project**. The estimate reads those items and the emails they
+  came from, and a deadline you attach fills in the project's due date. Deleting a project keeps them.
 - **Where sessions go:** only inside the hours in **Planning settings**, never on top of a calendar event,
   a class you listed, or another project's session, and never more than your daily limit.
 - **Buffer:** the last part of the time before a deadline is left empty (20% by default).
@@ -71,7 +74,7 @@ nothing goes on the calendar until you choose **Add to calendar**.
 The schedule is computed in the app. Only the "how many hours is this?" estimate uses AI, through a small
 Supabase Edge Function, so the API key never reaches the browser.
 
-1. Run `supabase/migrations/0006_projects.sql` in the SQL editor.
+1. Run `supabase/migrations/0006_projects.sql` and then `0007_project_links.sql` in the SQL editor.
 2. In Supabase, open **Edge Functions**, choose **Deploy a new function > Via Editor**, name it exactly
    `plan-project`, replace the sample code with the contents of `supabase/functions/plan-project/index.ts`,
    and deploy.

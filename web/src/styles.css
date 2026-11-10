@@ -226,6 +226,14 @@ button:disabled { cursor: default; }
 .field-row input[type='number'] { width: 5rem; }
 .sheet.sheet-wide { width: min(29rem, calc(100vw - 1.5rem)); }
 
+.hint { margin: 0.75rem 0.25rem -0.25rem; color: var(--label-2); font-size: 0.8125rem; }
+.field-row.pick { width: 100%; justify-content: flex-start; gap: 0.75rem; text-align: left; }
+.pick > i { display: grid; place-items: center; flex: none; width: 1.25rem; height: 1.25rem; border-radius: 50%; border: 1.5px solid var(--c); color: #fff; }
+.pick.is-on > i { background: var(--c); }
+.pick span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick:active { background: var(--fill); }
+button.field-row { width: 100%; text-align: left; }
+
 /* ---------- sheet ---------- */
 .sheet-layer { position: fixed; inset: 0; z-index: 50; }
 .sheet-scrim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; }

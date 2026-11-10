@@ -27,8 +27,11 @@ export interface DataSource {
   /** Retire the old plan, trash its unfinished sessions and add the new ones, all at once. */
   applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]): Promise<void>;
   /** Ask the AI to break the project into milestones with hours. Throws if it is unavailable. */
-  estimate(input: { name: string; description: string; course: string | null; deadline: string | null }): Promise<{ milestones: { title: string; hours: number }[]; rationale: string }>;
+  estimate(input: EstimateInput): Promise<{ milestones: { title: string; hours: number }[]; rationale: string }>;
 }
+
+/** `item_ids` are calendar items attached to the project; the AI reads them, and the emails they came from, as context. */
+export interface EstimateInput { name: string; description: string; course: string | null; deadline: string | null; item_ids: string[] }
 
 export type ProjectDraft = Pick<Project, 'name' | 'description' | 'course' | 'deadline' | 'granularity'>;
 export interface PlanMeta {
@@ -91,12 +94,12 @@ class SupabaseSource implements DataSource {
     return must(await this.sb.from('projects').update(patch).eq('id', id).select('*').single()) as Project;
   }
   async deleteProject(id: string) {
-    must(await this.sb.from('projects').delete().eq('id', id).select('id'));
+    must(await this.sb.rpc('delete_project', { p_project: id })); // removes its sessions, keeps attached items
   }
   async applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]) {
     must(await this.sb.rpc('apply_plan', { p_project: projectId, p_plan: plan, p_sessions: sessions }));
   }
-  async estimate(input: { name: string; description: string; course: string | null; deadline: string | null }) {
+  async estimate(input: EstimateInput) {
     const { data, error } = await this.sb.functions.invoke('plan-project', { body: input });
     if (error) {
       let detail = error.message;
@@ -163,7 +166,8 @@ class DemoSource implements DataSource {
   }
   async deleteProject(id: string) {
     this.projs = this.projs.filter((p) => p.id !== id);
-    this.items = this.items.filter((i) => i.project_id !== id);
+    this.items = this.items.filter((i) => !(i.project_id === id && i.origin === 'plan'));
+    for (const i of this.items) if (i.project_id === id) i.project_id = null;
   }
   async applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]) {
     const now = Date.now(), t = new Date().toISOString();
@@ -175,9 +179,10 @@ class DemoSource implements DataSource {
     sessions.forEach((s, k) => this.items.push({ ...this.items[0]!, ...s, id: `${id}-${k}`, origin: 'plan', project_id: projectId, plan_id: id, status: 'open', review_state: 'accepted', optional: false, all_day: false, due_precision: s.kind === 'task' ? 'date_only' : null, category: proj.course ? 'study' : 'work', course: proj.course, priority: 'medium', priority_reason: null, location: null, link: null, timezone: null, confidence: null, overridden_fields: [], ai_values: {}, actual_minutes: null, deleted_at: null, description: null, action_required: false, created_at: t, updated_at: t } as Item));
     Object.assign(proj, { current_plan_id: id, deadline: plan.deadline, granularity: plan.granularity });
   }
-  async estimate(input: { name: string }) {
+  async estimate(input: EstimateInput) {
     await new Promise((r) => setTimeout(r, 900));
-    return { milestones: [{ title: 'Research and outline', hours: 2 }, { title: 'First draft', hours: 4 }, { title: 'Revise', hours: 2.5 }, { title: 'Proofread and submit', hours: 1 }], rationale: `A sample estimate for "${input.name}". With your own account, Claude sizes this from the description.` };
+    const ctx = input.item_ids.length ? ` It took ${input.item_ids.length} attached item${input.item_ids.length === 1 ? '' : 's'} into account.` : '';
+    return { milestones: [{ title: 'Research and outline', hours: 2 }, { title: 'First draft', hours: 4 }, { title: 'Revise', hours: 2.5 }, { title: 'Proofread and submit', hours: 1 }], rationale: `A sample estimate for "${input.name}". With your own account, Claude sizes this from the description.${ctx}` };
   }
 }
 

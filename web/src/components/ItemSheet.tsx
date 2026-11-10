@@ -133,9 +133,11 @@ interface DetailProps {
   onEdit: () => void;
   close: () => void;
   projectName?: string;
+  onPlan?: () => void; // start a project from this item
+  onOpenProject?: () => void;
 }
 
-export function ItemDetail({ item, data, mutate, onDelete, onEdit, close, projectName }: DetailProps) {
+export function ItemDetail({ item, data, mutate, onDelete, onEdit, close, projectName, onPlan, onOpenProject }: DetailProps) {
   const [spent, setSpent] = useState(String(item.planned_minutes ?? 60));
   const isSession = item.origin === 'plan';
   const [history, setHistory] = useState<AuditEntry[] | null>(null);
@@ -210,6 +212,8 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close, projec
         <div className="field-row"><span>Priority</span><em>{item.priority[0]!.toUpperCase() + item.priority.slice(1)}{item.priority_reason ? `, ${item.priority_reason.toLowerCase()}` : ''}</em></div>
         <div className="field-row"><span>Came from</span><em>{isSession ? `Plan for ${projectName ?? 'a project'}` : ORIGIN_LABEL[item.origin]}</em></div>
         {isSession && done && item.actual_minutes != null && <div className="field-row"><span>Time spent</span><em>{item.actual_minutes} minutes (planned {item.planned_minutes ?? 60})</em></div>}
+        {!isSession && item.project_id && projectName && <button className="field-row is-link" onClick={onOpenProject}><span>Part of project</span><em>{projectName}</em></button>}
+        {!isSession && !item.project_id && !item.optional && item.status === 'open' && onPlan && <button className="field-row is-link" onClick={onPlan}><span>Plan this as a project</span></button>}
         {item.link && <a className="field-row is-link" href={item.link} target="_blank" rel="noreferrer"><span>{item.origin === 'email' ? 'Open the email' : 'Open link'}</span></a>}
       </div>
 

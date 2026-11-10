@@ -1,10 +1,10 @@
 import { DateTime } from 'luxon';
 import { useMemo, useState } from 'react';
 import type { DataSource, PlanMeta } from '../lib/data';
-import { fromIso, now } from '../lib/dates';
+import { fromIso, itemWhen, now } from '../lib/dates';
 import { busyFromItems, findIssues, learnedPace, manualMilestones, plan, remainingMilestones, suggestDeadline, type Milestone, type PlanResult, type Profile } from '../lib/planner';
 import type { Item, Project, ProjectPlan } from '../lib/types';
-import { Close, Plus } from './Icons';
+import { Check, Close, Plus } from './Icons';
 
 const hrs = (min: number) => { const h = Math.round((min / 60) * 10) / 10; return `${h} h`; };
 const dayTime = (iso: string) => fromIso(iso).toFormat('ccc d LLL, h:mm a');
@@ -19,6 +19,34 @@ function progress(planRow: ProjectPlan | undefined, sessions: Item[]) {
 interface Shared {
   items: Item[]; projects: Project[]; plans: ProjectPlan[]; profile: Profile;
   data: DataSource; reload: () => Promise<void>; say: (t: { text: string }) => void;
+  mutate: (id: string, patch: Partial<Item>) => void;
+}
+
+const linkedOf = (items: Item[], id: string) => items.filter((i) => i.project_id === id && i.origin !== 'plan' && !i.deleted_at);
+const whenShort = (i: Item) => { const w = itemWhen(i); return w ? w.toFormat('ccc d LLL') : 'no date'; };
+
+/** Choose calendar items to attach to a project. What they say is given to the AI as context. */
+function ItemPicker({ items, selected, onToggle }: { items: Item[]; selected: string[]; onToggle: (item: Item) => void }) {
+  const [q, setQ] = useState('');
+  const t = now().minus({ days: 1 }).toMillis();
+  const pool = items
+    .filter((i) => i.origin !== 'plan' && !i.deleted_at && i.review_state === 'accepted' && !['dismissed', 'cancelled'].includes(i.status))
+    .filter((i) => selected.includes(i.id) || ((itemWhen(i)?.toMillis() ?? Infinity) >= t && i.status === 'open'))
+    .filter((i) => !q.trim() || `${i.title} ${i.course ?? ''}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a, b) => Number(selected.includes(b.id)) - Number(selected.includes(a.id)) || (itemWhen(a)?.toMillis() ?? Infinity) - (itemWhen(b)?.toMillis() ?? Infinity));
+  return (
+    <div className="group">
+      <input className="field" placeholder="Search your calendar" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search items to attach" />
+      {pool.slice(0, 7).map((i) => (
+        <button type="button" key={i.id} className={`field-row pick cat-${i.category}${selected.includes(i.id) ? ' is-on' : ''}`} role="checkbox" aria-checked={selected.includes(i.id)} onClick={() => onToggle(i)}>
+          <i>{selected.includes(i.id) && <Check size={11} />}</i>
+          <span>{i.title}<small>{[i.kind === 'task' ? `due ${whenShort(i)}` : whenShort(i), i.course].filter(Boolean).join(', ')}</small></span>
+        </button>
+      ))}
+      {!pool.length && <div className="field-row"><span><small>Nothing matches.</small></span></div>}
+      {pool.length > 7 && <div className="field-row"><span><small>{pool.length - 7} more. Type to narrow it down.</small></span></div>}
+    </div>
+  );
 }
 
 /* ---------- list ---------- */
@@ -139,12 +167,23 @@ async function commit(shared: Shared, projectId: string, pl: ReturnType<typeof u
 }
 
 /* ---------- new project ---------- */
-export function NewProject({ shared, close }: { shared: Shared; close: () => void }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [course, setCourse] = useState('');
+export function NewProject({ shared, close, seed }: { shared: Shared; close: () => void; seed?: Item | null }) {
+  const seedDue = seed && itemWhen(seed) && itemWhen(seed)! > now() ? itemWhen(seed)! : null;
+  const [name, setName] = useState(seed?.title ?? '');
+  const [description, setDescription] = useState(seed?.summary ?? '');
+  const [course, setCourse] = useState(seed?.course ?? '');
   const [hasDeadline, setHasDeadline] = useState(true);
-  const [deadlineInput, setDeadlineInput] = useState(now().plus({ days: 10 }).set({ hour: 17, minute: 0 }).toFormat("yyyy-LL-dd'T'HH:mm"));
+  const [deadlineInput, setDeadlineInput] = useState((seedDue ?? now().plus({ days: 10 }).set({ hour: 17, minute: 0 })).toFormat("yyyy-LL-dd'T'HH:mm"));
+  const [attached, setAttached] = useState<string[]>(seed ? [seed.id] : []);
+  const [deadlineFrom, setDeadlineFrom] = useState<string | null>(seedDue ? seed!.title : null);
+  const toggleAttach = (it: Item) => {
+    const adding = !attached.includes(it.id);
+    setAttached(adding ? [...attached, it.id] : attached.filter((x) => x !== it.id));
+    const w = itemWhen(it);
+    // Attaching a deadline is the usual reason to make a project: take its date unless one was already taken.
+    if (adding && it.kind === 'task' && w && w > now() && !deadlineFrom) { setHasDeadline(true); setDeadlineInput(w.toFormat("yyyy-LL-dd'T'HH:mm")); setDeadlineFrom(it.title); }
+    if (adding && !course && it.course) setCourse(it.course);
+  };
   const [granularity, setGranularity] = useState<'daily' | 'weekly'>('daily');
   const [manualHours, setManualHours] = useState('');
   const [step, setStep] = useState<'form' | 'thinking' | 'preview' | 'saving'>('form');
@@ -166,7 +205,7 @@ export function NewProject({ shared, close }: { shared: Shared; close: () => voi
     }
     setStep('thinking');
     try {
-      const out = await shared.data.estimate({ name: name.trim(), description: description.trim(), course: course.trim() || null, deadline: given ? given.toUTC().toISO() : null });
+      const out = await shared.data.estimate({ name: name.trim(), description: description.trim(), course: course.trim() || null, deadline: given ? given.toUTC().toISO() : null, item_ids: attached });
       setMadeBy('ai'); setRationale(out.rationale);
       pl.start(out.milestones.map((m) => ({ title: m.title.slice(0, 60), minutes: Math.max(15, Math.round((m.hours * 60) / 15) * 15) })), given, true);
       setStep('preview');
@@ -179,6 +218,7 @@ export function NewProject({ shared, close }: { shared: Shared; close: () => voi
     setStep('saving');
     try {
       const p = await shared.data.createProject({ name: name.trim(), description: description.trim() || null, course: course.trim() || null, deadline: pl.deadline!.toUTC().toISO(), granularity });
+      await Promise.all(attached.map((id) => shared.data.update(id, { project_id: p.id })));
       await commit(shared, p.id, pl, madeBy, rationale);
       close();
     } catch (e) { setStep('preview'); setError(`It could not be saved: ${(e as Error).message}`); }
@@ -201,10 +241,15 @@ export function NewProject({ shared, close }: { shared: Shared; close: () => voi
           </div>
           <div className="group">
             <label className="field-row"><span>I have a deadline</span><input type="checkbox" className="switch" checked={hasDeadline} onChange={(e) => setHasDeadline(e.target.checked)} /></label>
-            {hasDeadline ? <label className="field-row"><span>Due</span><input type="datetime-local" value={deadlineInput} onChange={(e) => setDeadlineInput(e.target.value)} /></label>
+            {hasDeadline ? <label className="field-row"><span>Due{deadlineFrom && <small>from “{deadlineFrom.slice(0, 40)}”</small>}</span><input type="datetime-local" value={deadlineInput} onChange={(e) => { setDeadlineInput(e.target.value); setDeadlineFrom(null); }} /></label>
               : <div className="field-row"><span><small>A deadline will be suggested from how much free time you have.</small></span></div>}
           </div>
-          <div className="seg" role="tablist" aria-label="Timeline detail">
+          <section>
+            <h2>Related calendar items{attached.length ? ` (${attached.length} attached)` : ''}</h2>
+            <p className="hint">Attach the deadline, exam or emails this project is about. The estimate reads them, and the emails they came from, for context.</p>
+            <ItemPicker items={shared.items} selected={attached} onToggle={toggleAttach} />
+          </section>
+          <div className="seg" role="tablist" aria-label="Timeline detail" style={{ marginTop: '1rem' }}>
             <button role="tab" aria-selected={granularity === 'daily'} className={granularity === 'daily' ? 'is-on' : ''} onClick={() => setGranularity('daily')}>Daily sessions</button>
             <button role="tab" aria-selected={granularity === 'weekly'} className={granularity === 'weekly' ? 'is-on' : ''} onClick={() => setGranularity('weekly')}>Weekly targets</button>
           </div>
@@ -237,6 +282,8 @@ export function ProjectDetail({ project, shared, close }: { project: Project; sh
   const t = now();
   const issues = findIssues(project.deadline, current?.deadline ?? null, sess, items, t);
   const upcoming = sess.filter((s) => s.status === 'open' && Date.parse((s.end_at ?? s.due_at ?? s.start_at)!) > t.toMillis()).sort((a, b) => (a.start_at ?? a.due_at)!.localeCompare((b.start_at ?? b.due_at)!));
+  const linked = linkedOf(items, project.id);
+  const [picking, setPicking] = useState(false);
   const [mode, setMode] = useState<'view' | 'replan' | 'busy'>('view');
   const [confirming, setConfirming] = useState(false);
   const [deadlineEdit, setDeadlineEdit] = useState(project.deadline ? fromIso(project.deadline).toFormat("yyyy-LL-dd'T'HH:mm") : '');
@@ -248,6 +295,13 @@ export function ProjectDetail({ project, shared, close }: { project: Project; sh
     pl.start(remainingMilestones(current.milestones, sess), project.deadline ? fromIso(project.deadline) : null, false);
     setMode('replan');
   };
+  /** Ask the AI again, now that the attached items have changed, and plan whatever is not already done. */
+  const reestimate = () => run(async () => {
+    const out = await data.estimate({ name: project.name, description: project.description ?? '', course: project.course, deadline: project.deadline, item_ids: linked.map((i) => i.id) });
+    const fresh = out.milestones.map((m) => ({ title: m.title.slice(0, 60), minutes: Math.max(15, Math.round((m.hours * 60) / 15) * 15) }));
+    pl.start(remainingMilestones(fresh, sess), project.deadline ? fromIso(project.deadline) : null, true);
+    setTimeout(() => setMode('replan'), 0);
+  }, 'The AI estimate is not available');
   const restore = (v: ProjectPlan) => run(async () => {
     const meta: PlanMeta = { deadline: v.deadline, total_minutes: v.total_minutes, buffer_pct: v.buffer_pct, granularity: v.granularity, made_by: v.made_by, milestones: v.milestones, explanation: [`Restored from version ${v.version}. Sessions that were already in the past are left out.`, ...v.explanation] };
     await data.applyPlan(project.id, meta, v.sessions);
@@ -308,6 +362,21 @@ export function ProjectDetail({ project, shared, close }: { project: Project; sh
           {!upcoming.length && <div className="field-row"><span>Nothing scheduled</span>{project.status === 'open' && current && <button className="btn-text" onClick={startReplan}>Plan it</button>}</div>}
           {upcoming.length > 6 && <div className="field-row"><span><small>and {upcoming.length - 6} more</small></span></div>}
         </div>
+      </section>
+      <section>
+        <h2>Related calendar items</h2>
+        <div className="group">
+          {linked.map((i) => (
+            <div className={`field-row cat-${i.category}`} key={i.id}>
+              <span>{i.title}<small>{[i.kind === 'task' ? `due ${whenShort(i)}` : whenShort(i), i.status === 'done' && 'done'].filter(Boolean).join(', ')}</small></span>
+              <button className="btn-text" onClick={() => shared.mutate(i.id, { project_id: null })}>Remove</button>
+            </div>
+          ))}
+          {!linked.length && <div className="field-row"><span><small>None attached. Attach the deadline or emails this is about to give the estimate more to go on.</small></span></div>}
+          <div className="field-row"><button className="btn-text" onClick={() => setPicking(!picking)}>{picking ? 'Done choosing' : 'Attach items'}</button>
+            {linked.length > 0 && project.status === 'open' && <button className="btn-text" disabled={mode === 'busy'} onClick={() => void reestimate()}>{mode === 'busy' ? 'Estimating' : 'Re-estimate with these'}</button>}</div>
+        </div>
+        {picking && <ItemPicker items={items} selected={linked.map((i) => i.id)} onToggle={(it) => shared.mutate(it.id, { project_id: it.project_id === project.id ? null : project.id })} />}
       </section>
       <section>
         <h2>Deadline</h2>

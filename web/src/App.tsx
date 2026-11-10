@@ -12,7 +12,7 @@ import { clearCache, isDemo, makeSource, readCache, supabase, writeCache } from 
 import { groupByDay, matchesFilters, now, weekDays } from './lib/dates';
 import { NO_FILTERS, type Filters, type Item, type ItemDraft, type Project, type ProjectPlan, type ViewName } from './lib/types';
 
-type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new' } | { kind: 'profile' } | null;
+type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new'; seedId?: string } | { kind: 'profile' } | null;
 interface Toast { text: string; action?: { label: string; run: () => void } }
 
 const VIEWS: { name: ViewName; label: string; icon: () => React.ReactNode }[] = [
@@ -125,8 +125,14 @@ function Calendar({ session }: { session: Session | null }) {
   const open = sheet?.kind === 'item' && sheet.id ? items.find((i) => i.id === sheet.id) ?? null : null;
   const hiddenCount = filters.hiddenCategories.length + filters.hiddenCourses.length + filters.hiddenOrigins.length + filters.hiddenPriorities.length;
 
-  const shared = { items, projects: proj.projects, plans: proj.plans, profile, data, reload: load, say };
+  const shared = { items, projects: proj.projects, plans: proj.plans, profile, data, reload: load, say, mutate };
   const openProject = sheet?.kind === 'project' ? proj.projects.find((p) => p.id === sheet.id) ?? null : null;
+  // If the thing a sheet was showing is gone (deleted here or on another device), close the sheet
+  // properly; otherwise it would vanish while the app still believed it was open.
+  useEffect(() => {
+    if (sheet?.kind === 'item' && sheet.id && !items.some((i) => i.id === sheet.id)) setSheet(null);
+    if (sheet?.kind === 'project' && !proj.projects.some((p) => p.id === sheet.id)) setSheet(null);
+  }, [sheet, items, proj.projects]);
   const step = (dir: number) => setCursor((c) => (view === 'month' ? c.plus({ months: dir }) : view === 'week' ? c.plus({ weeks: dir }) : c.plus({ days: dir })));
   const newItem = (at?: DateTime) => setSheet({ kind: 'item', id: null, editing: true, at: at ?? cursor.set({ hour: Math.min(22, now().hour + 1), minute: 0 }) });
   const openItem = (item: Item) => setSheet({ kind: 'item', id: item.id, editing: false, at: cursor });
@@ -205,7 +211,8 @@ function Calendar({ session }: { session: Session | null }) {
                 else { create(full); close(); }
               }} />
           ) : (
-            <ItemDetail item={open!} data={data} mutate={mutate} onDelete={remove} onEdit={() => setSheet({ ...sheet, editing: true })} close={close} projectName={proj.projects.find((p) => p.id === open!.project_id)?.name} />
+            <ItemDetail item={open!} data={data} mutate={mutate} onDelete={remove} onEdit={() => setSheet({ ...sheet, editing: true })} close={close} projectName={proj.projects.find((p) => p.id === open!.project_id)?.name}
+              onPlan={projectsReady ? () => setSheet({ kind: 'project-new', seedId: open!.id }) : undefined} onOpenProject={() => setSheet({ kind: 'project', id: open!.project_id! })} />
           )}
         </Sheet>
       )}
@@ -214,7 +221,7 @@ function Calendar({ session }: { session: Session | null }) {
           {(close) => <ReviewQueue items={review} mutate={mutate} close={close} onEdit={(it) => setSheet({ kind: 'item', id: it.id, editing: true, at: cursor })} />}
         </Sheet>
       )}
-      {sheet?.kind === 'project-new' && <Sheet label="New project" wide onClosed={() => setSheet(null)}>{(close) => <NewProject shared={shared} close={close} />}</Sheet>}
+      {sheet?.kind === 'project-new' && <Sheet key="project-new" label="New project" wide onClosed={() => setSheet(null)}>{(close) => <NewProject shared={shared} close={close} seed={sheet.seedId ? items.find((i) => i.id === sheet.seedId) ?? null : null} />}</Sheet>}
       {sheet?.kind === 'project' && openProject && <Sheet key={`project-${openProject.id}`} label={openProject.name} wide onClosed={() => setSheet(null)}>{(close) => <ProjectDetail project={openProject} shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'profile' && <Sheet label="Planning settings" wide onClosed={() => setSheet(null)}>{(close) => <ProfileEditor shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'filters' && (
