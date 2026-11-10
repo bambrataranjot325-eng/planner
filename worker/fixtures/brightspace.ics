@@ -1,0 +1,46 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//D2L//Calendar Feed//EN
+BEGIN:VEVENT
+UID:6606-1001@brightspace.example
+DTSTAMP:20261101T120000Z
+DTSTART:20261114T045900Z
+DTEND:20261114T045900Z
+SUMMARY:Homework 8 - Due
+LOCATION:Data Structures and Algorithms\, Section A
+DESCRIPTION:Assignments: Homework 8\n\nView event - https://brightspace.example/d2l/lms/dropbox/user/folder_submit_files.d2l?db=5
+ 51234&grpid=0&isprv=0&bp=0&ou=412345
+END:VEVENT
+BEGIN:VEVENT
+UID:6606-1002@brightspace.example
+DTSTART:20261116T140000Z
+DTEND:20261116T140000Z
+SUMMARY:Quiz 7 - Due
+LOCATION:Discrete Mathematics
+DESCRIPTION:Quizzes: Quiz 7\n\nView event - https://brightspace.example/d2l/lms/quizzing/user/quiz_summary.d2l?qi=77123&ou=409876
+END:VEVENT
+BEGIN:VEVENT
+UID:6606-1003@brightspace.example
+DTSTART:20261110T050000Z
+DTEND:20261110T050000Z
+SUMMARY:Quiz 7 - Available
+LOCATION:Discrete Mathematics
+DESCRIPTION:Quizzes: Quiz 7\n\nView event - https://brightspace.example/d2l/lms/quizzing/user/quiz_summary.d2l?qi=77123&ou=409876
+END:VEVENT
+BEGIN:VEVENT
+UID:6606-1004@brightspace.example
+DTSTART;VALUE=DATE:20261119
+DTEND;VALUE=DATE:20261120
+SUMMARY:Midterm Exam 2
+LOCATION:Data Structures and Algorithms\, Section A
+DESCRIPTION:Bring a calculator\; closed book.\n\nView event - https://brightspace.example/d2l/le/calendar/412345/event/901234/detailsview
+END:VEVENT
+BEGIN:VEVENT
+UID:6606-1005@brightspace.example
+DTSTART:20261112T190000Z
+DTEND:20261112T201500Z
+SUMMARY:Guest lecture: embedded security
+LOCATION:Introduction to Engineering and Design
+DESCRIPTION:View event - https://brightspace.example/d2l/le/calendar/400111/event/901999/detailsview
+END:VEVENT
+END:VCALENDAR

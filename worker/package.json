@@ -1,0 +1,26 @@
+{
+  "name": "planner-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/index.js loop",
+    "once": "node dist/index.js once",
+    "preview:fixtures": "node dist/index.js preview-fixtures"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.45.4",
+    "luxon": "3.5.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/luxon": "3.4.2",
+    "@types/node": "22.7.4",
+    "typescript": "5.6.2",
+    "vitest": "2.1.2"
+  }
+}

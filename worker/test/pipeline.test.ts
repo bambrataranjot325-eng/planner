@@ -1,0 +1,431 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fixturesDir, loadModels, loadPrompt } from '../src/config.js';
+import { cleanBody, htmlToText } from '../src/pipeline/clean.js';
+import { formatAnchor, localToUtc, utcToLocal } from '../src/pipeline/dates.js';
+import { buildUserPrompt, extract } from '../src/pipeline/extract.js';
+import { filterMessage } from '../src/pipeline/filter.js';
+import { estimateCost } from '../src/pipeline/llm.js';
+import { redact } from '../src/pipeline/redact.js';
+import { parseExtraction } from '../src/pipeline/schema.js';
+import { toItemRow } from '../src/pipeline/write.js';
+import { fixtureToMessage, loadFixtures } from '../src/cli/fixtures.js';
+import { parseGmailMessage } from '../src/gmail/parse.js';
+import { planSync } from '../src/gmail/sync.js';
+import { GmailError, HistoryExpiredError, makeGmailApi, type GmailApi } from '../src/gmail/client.js';
+import { classify, parseIcs, summarizeFeed } from '../src/brightspace/ics.js';
+import type { LlmCall } from '../src/types.js';
+
+const NY = 'America/New_York';
+const SYD = 'Australia/Sydney';
+
+describe('date resolution', () => {
+  it('converts local wall-clock times to UTC in winter and summer', () => {
+    expect(localToUtc('2026-11-13T17:00', NY, 'end')!.iso).toBe('2026-11-13T22:00:00Z'); // EST, UTC-5
+    expect(localToUtc('2026-07-10T17:00', NY, 'end')!.iso).toBe('2026-07-10T21:00:00Z'); // EDT, UTC-4
+    expect(localToUtc('2026-11-13T17:00', SYD, 'end')!.iso).toBe('2026-11-13T06:00:00Z'); // AEDT, UTC+11
+    expect(localToUtc('2026-07-10T17:00', SYD, 'end')!.iso).toBe('2026-07-10T07:00:00Z'); // AEST, UTC+10
+  });
+  it('treats a date-only deadline as 23:59 that day, and a date-only event as all day', () => {
+    const due = localToUtc('2026-11-20', NY, 'end')!;
+    expect(due).toEqual({ iso: '2026-11-21T04:59:00Z', dateOnly: true });
+    expect(localToUtc('2026-11-20', NY, 'start')!.iso).toBe('2026-11-20T05:00:00Z');
+  });
+  it('keeps an 11:59 PM deadline on the right local day (the off-by-one in the old workflow)', () => {
+    const iso = localToUtc('2026-11-16T23:59', NY, 'end')!.iso;
+    expect(iso).toBe('2026-11-17T04:59:00Z'); // UTC date is the 17th...
+    expect(utcToLocal(iso, NY)).toBe('2026-11-16T23:59'); // ...but it is still the 16th for me
+  });
+  it('handles the spring-forward gap by moving to the next valid time', () => {
+    // New York: 02:30 on 8 Mar 2026 does not exist. Sydney: 02:30 on 4 Oct 2026 does not exist.
+    expect(localToUtc('2026-03-08T02:30', NY, 'end')!.iso).toBe('2026-03-08T07:30:00Z'); // 03:30 EDT
+    expect(localToUtc('2026-10-04T02:30', SYD, 'end')!.iso).toBe('2026-10-03T16:30:00Z'); // 03:30 AEDT
+  });
+  it('handles the fall-back repeat by taking the first occurrence', () => {
+    expect(localToUtc('2026-11-01T01:30', NY, 'end')!.iso).toBe('2026-11-01T05:30:00Z'); // 01:30 EDT, before clocks go back
+    expect(localToUtc('2026-04-05T02:30', SYD, 'end')!.iso).toBe('2026-04-04T15:30:00Z'); // 02:30 AEDT
+  });
+  it('days either side of a clock change are 23 and 25 hours apart', () => {
+    const a = Date.parse(localToUtc('2026-03-08', NY, 'start')!.iso);
+    const b = Date.parse(localToUtc('2026-03-09', NY, 'start')!.iso);
+    expect((b - a) / 3_600_000).toBe(23);
+    const c = Date.parse(localToUtc('2026-04-05', SYD, 'start')!.iso);
+    const d = Date.parse(localToUtc('2026-04-06', SYD, 'start')!.iso);
+    expect((d - c) / 3_600_000).toBe(25);
+  });
+  it('gives the model the received date with its weekday in my timezone', () => {
+    expect(formatAnchor(new Date('2026-11-10T15:00:00Z'), NY)).toBe('Tuesday 2026-11-10 10:00 (America/New_York)');
+    expect(formatAnchor(new Date('2026-11-10T15:00:00Z'), SYD)).toBe('Wednesday 2026-11-11 02:00 (Australia/Sydney)');
+  });
+  it('rejects garbage', () => {
+    expect(localToUtc('next Friday', NY, 'end')).toBeNull();
+    expect(localToUtc(null, NY, 'end')).toBeNull();
+  });
+});
+
+describe('schema validation', () => {
+  const good = { title: 'Submit essay draft', summary: 'Draft due on Brightspace.', kind: 'task', start_local: null, end_local: null, due_local: '2026-11-13T17:00', due_precision: 'exact', course: 'EXPOS-UY 1', priority: 'medium', priority_reason: 'homework', category: 'study', action_required: true, confidence: 0.95, updates_item_id: null, cancelled: false };
+  it('accepts a valid reply, including one wrapped in code fences', () => {
+    expect(parseExtraction(JSON.stringify({ items: [good] })).ok).toBe(true);
+    expect(parseExtraction('```json\n' + JSON.stringify({ items: [] }) + '\n```').ok).toBe(true);
+  });
+  it('rejects bad JSON, long titles, timezone-suffixed dates and unknown enums', () => {
+    expect(parseExtraction('Sure! Here you go').ok).toBe(false);
+    expect(parseExtraction(JSON.stringify({ items: [{ ...good, title: 'x'.repeat(81) }] })).ok).toBe(false);
+    expect(parseExtraction(JSON.stringify({ items: [{ ...good, due_local: '2026-11-13T17:00:00Z' }] })).ok).toBe(false);
+    expect(parseExtraction(JSON.stringify({ items: [{ ...good, priority: 'urgent' }] })).ok).toBe(false);
+    expect(parseExtraction(JSON.stringify({ items: [{ ...good, confidence: 1.4 }] })).ok).toBe(false);
+  });
+});
+
+describe('extraction flow (fake models)', () => {
+  const models = { ...loadModels(), escalate_below_confidence: 0.75 }; // tests fix the threshold; the live value is in models.json
+  const input = { from: 'a@b.c', subject: 's', receivedAnchor: 'Tuesday 2026-11-10 10:00 (America/New_York)', body: 'b', existing: [] };
+  const item = (confidence: number) => ({ title: 'Do the thing', summary: 's', kind: 'task', start_local: null, end_local: null, due_local: '2026-11-13', due_precision: 'date_only', course: null, priority: 'medium', priority_reason: 'r', category: 'study', action_required: true, confidence });
+  const reply = (obj: unknown): LlmCall => ({ text: typeof obj === 'string' ? obj : JSON.stringify(obj), inputTokens: 1000, outputTokens: 100 });
+  const scripted = (replies: LlmCall[]) => { let n = 0; const fn = async () => replies[n++]!; return Object.assign(fn, { calls: () => n }); };
+
+  it('uses only the cheap model when it is confident', async () => {
+    const first = scripted([reply({ items: [item(0.95)] })]);
+    const second = scripted([]);
+    const out = await extract(input, 'sys', models, { firstPass: first, escalation: second });
+    expect(out).toMatchObject({ escalated: false, failed: false });
+    expect(out.items).toHaveLength(1);
+    expect(second.calls()).toBe(0);
+  });
+  it('retries a malformed reply once, then succeeds', async () => {
+    const first = scripted([reply('not json'), reply({ items: [] })]);
+    const out = await extract(input, 'sys', models, { firstPass: first, escalation: scripted([]) });
+    expect(first.calls()).toBe(2);
+    expect(out.failed).toBe(false);
+    expect(out.usage.map((u) => u.purpose)).toEqual(['extract', 'extract_retry']);
+  });
+  it('escalates to the stronger model when the cheap one is unsure', async () => {
+    const out = await extract(input, 'sys', models, { firstPass: scripted([reply({ items: [item(0.5)] })]), escalation: scripted([reply({ items: [item(0.9)] })]) });
+    expect(out.escalated).toBe(true);
+    expect(out.items[0]!.confidence).toBe(0.9);
+  });
+  it('gives up after both models fail twice, without throwing', async () => {
+    const bad = () => scripted([reply('x'), reply('y')]);
+    const out = await extract(input, 'sys', models, { firstPass: bad(), escalation: bad() });
+    expect(out).toMatchObject({ failed: true, items: [] });
+    expect(out.usage).toHaveLength(4);
+  });
+  it('survives a model that throws (network error, rate limit)', async () => {
+    const boom = async () => { throw new Error('LLM HTTP 429'); };
+    const out = await extract(input, 'sys', models, { firstPass: boom, escalation: scripted([reply({ items: [] })]) });
+    expect(out).toMatchObject({ failed: false, escalated: true });
+  });
+  it('estimates cost from token counts', () => {
+    expect(estimateCost({ provider: 'groq', model: 'm', usd_per_mtok_in: 1, usd_per_mtok_out: 2 }, 1_000_000, 500_000)).toBe(2);
+  });
+  it('the versioned prompt file loads and mentions the review queue rule', () => {
+    expect(loadPrompt(models.prompt_version)).toContain('review queue');
+  });
+});
+
+describe('item mapping', () => {
+  const base = { title: 'T', summary: 's', kind: 'task' as const, start_local: null, end_local: null, due_local: '2026-11-13T17:00', due_precision: 'exact' as const, course: null, priority: 'medium' as const, priority_reason: 'r', category: 'study' as const, action_required: true, confidence: 0.9 };
+  it('tasks get due_at, events get start/end, and all-day is detected', () => {
+    expect(toItemRow(base, NY, 0.6)).toMatchObject({ due_at: '2026-11-13T22:00:00Z', start_at: null, all_day: false, review_state: 'accepted' });
+    const ev = toItemRow({ ...base, kind: 'event', due_local: null, start_local: '2026-11-12T15:00', end_local: '2026-11-12T16:00' }, NY, 0.6);
+    expect(ev).toMatchObject({ start_at: '2026-11-12T20:00:00Z', end_at: '2026-11-12T21:00:00Z', due_at: null, all_day: false });
+    expect(toItemRow({ ...base, kind: 'event', due_local: null, start_local: '2026-11-19' }, NY, 0.6).all_day).toBe(true);
+  });
+  it('low confidence and cancellations go to Needs review', () => {
+    expect(toItemRow({ ...base, confidence: 0.59 }, NY, 0.6).review_state).toBe('needs_review');
+    expect(toItemRow({ ...base, cancelled: true }, NY, 0.6).review_state).toBe('needs_review');
+  });
+});
+
+describe('cleaning and redaction', () => {
+  const e10 = loadFixtures().find((f) => f.id === 'e10')!;
+  it('removes quoted replies and signatures', () => {
+    const out = cleanBody(e10.body, 6000);
+    expect(out).toContain('review my section');
+    expect(out).not.toContain('earlier message');
+    expect(out).not.toContain('Sent from my iPhone');
+    expect(out).not.toMatch(/wrote:/);
+  });
+  it('only the newest message of a long chain reaches the model', () => {
+    const out = cleanBody(loadFixtures().find((f) => f.id === 'e17')!.body, 6000);
+    expect(out).toContain('Friday noon');
+    expect(out).not.toContain('October');
+  });
+  it('truncates very long bodies', () => {
+    expect(cleanBody('word '.repeat(5000), 6000).length).toBeLessThan(6100);
+  });
+  it('masks cards, passwords, account numbers and codes, and leaves ordinary numbers alone', () => {
+    expect(redact('card 4111 1111 1111 1111 thanks')).toBe('card [CARD] thanks');
+    expect(redact('My login password is hunter2 ok')).toBe('My login password is [REDACTED] ok');
+    expect(redact('Account number: 4481 2290 115.')).toBe('Account number: [ACCOUNT].');
+    expect(redact('Your verification code is 481920')).toBe('Your verification code is [CODE]');
+    expect(redact('Due November 24, 2026 at 11:59 PM, room 204, $84.12')).toBe('Due November 24, 2026 at 11:59 PM, room 204, $84.12');
+    expect(redact('order 1234567890123456')).toBe('order 1234567890123456'); // 16 digits but fails the card checksum
+  });
+  it('the payload for e10 contains no password and no quoted thread', () => {
+    const msg = fixtureToMessage(e10);
+    const payload = buildUserPrompt({ from: msg.from, subject: msg.subject, receivedAnchor: formatAnchor(msg.receivedAt, NY), body: redact(cleanBody(msg.bodyText, 6000)), existing: [] });
+    expect(payload).not.toContain('hunter2');
+    expect(payload).toContain('Received: Tuesday 2026-11-10 10:00 (America/New_York)');
+  });
+  it('turns HTML into text', () => {
+    expect(htmlToText('<style>p{}</style><p>Due&nbsp;<b>Friday</b></p>').replace(/\s+/g, ' ').trim()).toBe('Due Friday');
+  });
+});
+
+describe('pre-LLM filter', () => {
+  const fixtures = loadFixtures();
+  it('has at least 30 fixtures covering every required type', () => {
+    expect(fixtures.length).toBeGreaterThanOrEqual(30);
+    const types = new Set(fixtures.map((f) => f.type));
+    for (const t of ['deadline', 'invite', 'reschedule', 'cancellation', 'newsletter', 'receipt', 'multi', 'relative', 'long_chain', 'non_english']) expect(types.has(t)).toBe(true);
+  });
+  for (const f of loadFixtures()) {
+    it(`${f.id} ${f.type}: ${f.expect.filter}`, () => {
+      expect(filterMessage(fixtureToMessage(f)).decision).toBe(f.expect.filter);
+    });
+  }
+  it('never filters out an email that contains a real action item', () => {
+    for (const f of fixtures.filter((x) => x.expect.items > 0)) expect(filterMessage(fixtureToMessage(f)).decision).toBe('pass');
+  });
+  it('applies my sender rules, with allow beating everything else', () => {
+    const promo = fixtureToMessage(fixtures.find((f) => f.id === 'e27')!);
+    expect(filterMessage(promo, [{ pattern: '@shoebarn.example', action: 'allow' }]).decision).toBe('pass');
+    const real = fixtureToMessage(fixtures.find((f) => f.id === 'e01')!);
+    expect(filterMessage(real, [{ pattern: 'dw@university.example', action: 'block' }])).toEqual({ decision: 'skip', reason: 'sender_blocklist' });
+  });
+  it('skips mail that is not in the inbox', () => {
+    expect(filterMessage({ ...fixtureToMessage(fixtures[0]!), labels: ['SENT'] }).reason).toBe('not_inbox');
+  });
+});
+
+describe('gmail message parsing', () => {
+  const b64 = (s: string) => Buffer.from(s).toString('base64url');
+  it('prefers the plain-text part and ignores attachments', () => {
+    const msg = parseGmailMessage({
+      id: 'm1', threadId: 't1', labelIds: ['INBOX'], internalDate: '1794322800000',
+      payload: { mimeType: 'multipart/mixed', headers: [{ name: 'From', value: 'A <a@b.c>' }, { name: 'Subject', value: 'Hello' }, { name: 'List-Unsubscribe', value: '<x>' }],
+        parts: [
+          { mimeType: 'multipart/alternative', parts: [{ mimeType: 'text/plain', body: { data: b64('plain body é') } }, { mimeType: 'text/html', body: { data: b64('<p>html body</p>') } }] },
+          { mimeType: 'text/plain', filename: 'notes.txt', body: { data: b64('attachment text') } },
+        ] },
+    });
+    expect(msg).toMatchObject({ id: 'm1', threadId: 't1', from: 'A <a@b.c>', subject: 'Hello', bodyText: 'plain body é' });
+    expect(msg.headers['list-unsubscribe']).toBe('<x>');
+    expect(msg.receivedAt.toISOString()).toBe('2026-11-10T15:00:00.000Z');
+  });
+  it('falls back to HTML when there is no plain part', () => {
+    const msg = parseGmailMessage({ id: 'm2', payload: { mimeType: 'text/html', headers: [], body: { data: b64('<div>Only <b>html</b></div>') } } });
+    expect(msg.bodyText.replace(/\s+/g, ' ').trim()).toBe('Only html');
+  });
+});
+
+describe('delta sync cursor', () => {
+  const api = (over: Partial<GmailApi>): GmailApi => ({
+    getProfile: async () => ({ emailAddress: 'me@example.com', historyId: '900' }),
+    listMessageIds: async () => ['new3', 'new2', 'old1'],
+    listAddedSince: async () => ({ ids: ['d1', 'd2'], historyId: '905' }),
+    getMessage: async () => null,
+    ...over,
+  });
+  it('first run backfills the last N days, oldest first, and saves the cursor read before listing', async () => {
+    let query = '';
+    const plan = await planSync(api({ listMessageIds: async (q) => { query = q; return ['new3', 'new2', 'old1']; } }), { cursor: {}, backfillDone: false }, 30);
+    expect(query).toBe('in:inbox newer_than:30d');
+    expect(plan).toEqual({ ids: ['old1', 'new2', 'new3'], nextCursor: { historyId: '900' }, kind: 'backfill' });
+  });
+  it('later runs ask only for what changed since the cursor and never list the mailbox', async () => {
+    let listed = false;
+    let since = '';
+    const plan = await planSync(api({ listMessageIds: async () => { listed = true; return []; }, listAddedSince: async (h) => { since = h; return { ids: ['d1', 'd2'], historyId: '905' }; } }), { cursor: { historyId: '850' }, backfillDone: true }, 30);
+    expect(since).toBe('850');
+    expect(listed).toBe(false);
+    expect(plan).toEqual({ ids: ['d1', 'd2'], nextCursor: { historyId: '905' }, kind: 'delta' });
+  });
+  it('with nothing new, the cursor still moves forward', async () => {
+    const plan = await planSync(api({ listAddedSince: async () => ({ ids: [], historyId: null }) }), { cursor: { historyId: '850' }, backfillDone: true }, 30);
+    expect(plan).toEqual({ ids: [], nextCursor: { historyId: '900' }, kind: 'delta' });
+  });
+  it('recovers from an expired cursor with a 7-day window instead of a full re-read', async () => {
+    let query = '';
+    const plan = await planSync(api({ listAddedSince: async () => { throw new HistoryExpiredError(); }, listMessageIds: async (q) => { query = q; return ['b', 'a']; } }), { cursor: { historyId: '1' }, backfillDone: true }, 30);
+    expect(query).toBe('in:inbox newer_than:7d');
+    expect(plan).toEqual({ ids: ['a', 'b'], nextCursor: { historyId: '900' }, kind: 'recovery' });
+  });
+});
+
+describe('brightspace feed', () => {
+  const events = parseIcs(readFileSync(join(fixturesDir, 'brightspace.ics'), 'utf8'));
+  it('reads all five fixture events, unfolding wrapped lines and unescaping commas', () => {
+    expect(events).toHaveLength(5);
+    expect(events[0]).toMatchObject({ summary: 'Homework 8 - Due', location: 'Data Structures and Algorithms, Section A', allDay: false });
+    expect(events[0]!.description).toContain('db=551234&grpid=0'); // the folded line was joined
+  });
+  it('detects all-day events and event types', () => {
+    expect(events[3]!.allDay).toBe(true);
+    expect(events.map(classify)).toEqual(['assignment', 'quiz', 'quiz', 'exam', 'other']);
+  });
+  it('the report keeps course names but scrubs ids and tokens from links', () => {
+    const report = summarizeFeed(events);
+    expect(report).toContain('Events in feed: 5');
+    expect(report).toContain('"… - Due": 2');
+    expect(report).toContain('"… - Available": 1');
+    expect(report).not.toMatch(/551234|412345|77123/);
+  });
+});
+
+describe('gmail rate limits', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const res = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  const quota = { error: { message: "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'" } };
+
+  it('waits and retries when Gmail says the per-minute quota is exceeded (the error from the first big dry-run)', async () => {
+    const replies = [res(403, quota), res(429, { error: { message: 'Too many requests' } }), res(200, { emailAddress: 'me@example.com', historyId: 7 })];
+    const fetchMock = vi.fn(async () => replies.shift()!);
+    vi.stubGlobal('fetch', fetchMock);
+    const profile = await makeGmailApi('token', { baseDelayMs: 1, paceMs: 0 }).getProfile();
+    expect(profile).toEqual({ emailAddress: 'me@example.com', historyId: '7' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it('gives up after six attempts with the real error', async () => {
+    const fetchMock = vi.fn(async () => res(403, quota));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(makeGmailApi('token', { baseDelayMs: 1, paceMs: 0 }).getProfile()).rejects.toThrow(/Quota exceeded/);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+  it('does not retry a real permission error', async () => {
+    const fetchMock = vi.fn(async () => res(403, { error: { message: 'Request had insufficient authentication scopes.' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(makeGmailApi('token', { baseDelayMs: 1, paceMs: 0 }).getProfile()).rejects.toBeInstanceOf(GmailError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+import { applyItem, findDuplicate, MemoryStore, titleSimilarity, type ApplyContext } from '../src/pipeline/store.js';
+import { renderDryRun } from '../src/pipeline/report.js';
+import type { ExtractedItem } from '../src/pipeline/schema.js';
+
+describe('per-event timezones', () => {
+  const base: ExtractedItem = { title: 'Attend Joji concert', summary: 's', kind: 'event', start_local: '2026-11-14T19:00', end_local: null, due_local: null, due_precision: 'exact', course: null, priority: 'medium', priority_reason: 'r', category: 'personal', action_required: false, confidence: 0.95 };
+  it('a Sydney concert is 7 PM in Sydney even when my timezone is New York', () => {
+    const row = toItemRow({ ...base, timezone: 'Australia/Sydney' }, NY, 0.6);
+    expect(row.start_at).toBe('2026-11-14T08:00:00Z'); // 19:00 AEDT
+    expect(row.timezone).toBe('Australia/Sydney');
+  });
+  it('without a stated place, the time is read in my timezone', () => {
+    const row = toItemRow(base, NY, 0.6);
+    expect(row.start_at).toBe('2026-11-15T00:00:00Z'); // 19:00 EST
+    expect(row.timezone).toBeNull();
+  });
+  it('a flight departs in one timezone and lands in another', () => {
+    const row = toItemRow({ ...base, title: 'Fly SYD to JFK', start_local: '2026-11-29T21:40', end_local: '2026-11-29T22:55', timezone: 'Australia/Sydney', end_timezone: 'America/New_York' }, SYD, 0.6);
+    expect(row.start_at).toBe('2026-11-29T10:40:00Z');
+    expect(row.end_at).toBe('2026-11-30T03:55:00Z');
+    expect(Date.parse(row.end_at!)).toBeGreaterThan(Date.parse(row.start_at!)); // lands "an hour later" on the clock, 17 hours later in reality
+  });
+  it('ignores a made-up timezone name', () => {
+    expect(toItemRow({ ...base, timezone: 'Sydney time' }, NY, 0.6).timezone).toBeNull();
+    expect(toItemRow({ ...base, timezone: 'Mars/Olympus' }, NY, 0.6).timezone).toBeNull();
+  });
+});
+
+describe('duplicate detection (titles taken from the real dry-run)', () => {
+  const ev = (title: string, start_at: string) => ({ id: title, title, kind: 'event' as const, start_at, due_at: null });
+  const task = (title: string, due_at: string | null) => ({ id: title, title, kind: 'task' as const, start_at: null, due_at });
+  it('merges the two Joji emails and the two Screamfest emails', () => {
+    expect(findDuplicate(ev('Attend Joji concert at Afterpay Arena', '2026-11-14T08:00:00Z'), [ev('Attend Joji concert at Afterpay Arena, Sydney', '2026-11-14T08:00:00Z')])).not.toBeNull();
+    expect(findDuplicate(ev('Attend Screamfest Halloween Festival at Manning Bar, Sydney', '2026-10-31T06:00:00Z'), [ev('Attend SCREAMFEST SYDNEY - Halloween Festival', '2026-10-31T06:00:00Z')])).not.toBeNull();
+  });
+  it('merges repeated password reminders', () => {
+    expect(findDuplicate(task('Change NYU NetID password before it expires', '2026-11-07T04:59:00Z'), [task('Change NYU NetID password before it expires', '2026-11-07T04:59:00Z')])).not.toBeNull();
+  });
+  it('keeps different things apart', () => {
+    const wed = '2026-11-12T04:59:00Z';
+    expect(findDuplicate(task('Submit Homework 9', wed), [task('Submit Homework 8', wed)])).toBeNull(); // different number
+    expect(findDuplicate(task('Submit Lab 9 report', wed), [task('Submit Lab 9 pre-work', wed)])).toBeNull(); // different words
+    expect(findDuplicate(task('Change NYU NetID password before it expires', '2027-11-07T04:59:00Z'), [task('Change NYU NetID password before it expires', '2026-11-07T04:59:00Z')])).toBeNull(); // a year apart
+    expect(findDuplicate(ev('Attend Joji concert', '2026-11-14T08:00:00Z'), [task('Attend Joji concert', '2026-11-14T08:00:00Z')])).toBeNull(); // event vs task
+    expect(findDuplicate(task('Reply to Anna about lunch', null), [task('Reply to Sam about the deck', null)])).toBeNull();
+  });
+  it('similarity ignores case, punctuation and filler words', () => {
+    expect(titleSimilarity('Pay the Chase card bill', 'pay chase card bill!')).toBe(1);
+  });
+});
+
+describe('what an extracted item does to the calendar', () => {
+  const NOW = new Date('2026-11-10T04:00:00Z');
+  const item = (over: Partial<ExtractedItem>): ExtractedItem => ({ title: 'Change NYU NetID password before it expires', summary: 's', kind: 'task', start_local: null, end_local: null, due_local: '2026-11-20', due_precision: 'date_only', course: null, priority: 'high', priority_reason: 'r', category: 'admin', action_required: true, confidence: 0.95, ...over });
+  const ctx = (store: MemoryStore, ref: string, over: Partial<ApplyContext> = {}): ApplyContext => ({ knownIds: new Set(store.items.map((i) => i.id)), threadKey: `src:${ref}`, src: { ref, link: 'l', sourceId: null, messageRowId: null }, skipPast: false, now: NOW, ...over });
+  const run = (store: MemoryStore, it: ExtractedItem, ref: string, over: Partial<ApplyContext> = {}) => applyItem(store, it, toItemRow(it, NY, 0.6), ctx(store, ref, over));
+
+  it('nine reminder emails in nine threads become one item with nine sources', async () => {
+    const store = new MemoryStore();
+    const actions: string[] = [];
+    for (let n = 1; n <= 9; n++) actions.push((await run(store, item({}), `m${n}`)).action);
+    expect(actions).toEqual(['created', ...Array(8).fill('merged')]);
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0]!.sources).toHaveLength(9);
+  });
+  it('"your password has been changed" marks the open task done', async () => {
+    const store = new MemoryStore();
+    const { itemId } = await run(store, item({}), 'm1');
+    const done = await run(store, item({ updates_item_id: itemId, resolved: true }), 'm2');
+    expect(done.action).toBe('completed');
+    expect(store.items[0]!.status).toBe('done');
+    expect((await store.context('other', NY, NOW)).length).toBe(0); // done items are no longer offered to the model
+  });
+  it('a "done" email with nothing to close creates nothing', async () => {
+    const store = new MemoryStore();
+    expect((await run(store, item({ resolved: true }), 'm1')).action).toBe('ignored');
+    expect(store.items).toHaveLength(0);
+  });
+  it('a reschedule updates the item instead of adding a second one', async () => {
+    const store = new MemoryStore();
+    const { itemId } = await run(store, item({ title: 'Submit Essay 2 draft', due_local: '2026-11-13T17:00', due_precision: 'exact' }), 'm1');
+    const out = await run(store, item({ title: 'Submit Essay 2 draft', due_local: '2026-11-16T23:59', due_precision: 'exact', updates_item_id: itemId }), 'm2');
+    expect(out.action).toBe('updated');
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0]!.row.due_at).toBe('2026-11-17T04:59:00Z');
+  });
+  it('a cancellation keeps the item, marked cancelled and waiting for my confirmation', async () => {
+    const store = new MemoryStore();
+    const { itemId } = await run(store, item({}), 'm1');
+    expect((await run(store, item({ updates_item_id: itemId, cancelled: true }), 'm2')).action).toBe('cancelled');
+    expect(store.items[0]).toMatchObject({ status: 'cancelled', row: { review_state: 'needs_review' } });
+  });
+  it('the model cannot update an item it was not shown', async () => {
+    const store = new MemoryStore();
+    const out = await run(store, item({ updates_item_id: '11111111-1111-4111-8111-111111111111' }), 'm1');
+    expect(out.action).toBe('created');
+  });
+  it('during the first 30-day read, things already in the past are skipped; afterwards they are not', async () => {
+    const store = new MemoryStore();
+    const past = item({ title: 'Attend Screamfest', kind: 'event', due_local: null, start_local: '2026-10-31T17:00', timezone: 'Australia/Sydney' });
+    expect((await run(store, past, 'm1', { skipPast: true })).action).toBe('skipped_past');
+    expect((await run(store, item({}), 'm2', { skipPast: true })).action).toBe('created'); // future deadline still created
+    expect((await run(store, past, 'm3', { skipPast: false })).action).toBe('created');
+  });
+});
+
+describe('dry-run report', () => {
+  it('shows created items in their own timezone and lists merges and skips separately', () => {
+    const mk = (title: string, action: any, over = {}) => ({ ...toItemRow({ title, summary: 's', kind: 'event', start_local: '2026-11-14T19:00', end_local: null, due_local: null, due_precision: 'exact', course: null, priority: 'medium', priority_reason: 'r', category: 'personal', action_required: false, confidence: 0.95, timezone: 'Australia/Sydney', ...over }, NY, 0.6), action });
+    const entry = (subject: string, items: any[]) => ({ receivedAt: new Date(), from: 'StubHub <a@b.c>', subject, filter: 'pass', escalated: false, items });
+    const md = renderDryRun([entry('Tickets on the way', [mk('Attend Joji concert', 'created')]), entry('Tickets ready', [mk('Attend Joji concert at Afterpay Arena', 'merged')]), entry('Old', [mk('Attend Screamfest', 'skipped_past')]), { ...entry('Promo', []), filter: 'gmail_promotions' }], NY, 'me@example.com', 0.01, '');
+    expect(md).toContain('| Attend Joji concert | event | starts Sat 14 Nov, 7:00 PM Sydney time |');
+    expect(md).toContain('Items that would be created: 1 on the calendar');
+    expect(md).toContain('Repeat emails merged into an existing item: 1');
+    expect(md).toContain('Not created because the date had already passed: 1');
+    expect(md).toContain('## Merged into an item listed earlier');
+  });
+});
+
+describe('filter: order emails that announce a change', () => {
+  const msg = (subject: string) => ({ id: 'x', threadId: 'x', labels: ['INBOX'], headers: {}, from: 'StubHub <a@b.c>', subject, receivedAt: new Date(), bodyText: 'Details inside.' });
+  it('passes "Important update regarding your Order" to the AI but still skips a plain receipt', () => {
+    expect(filterMessage(msg('Important update regarding your Order# 650518710')).decision).toBe('pass');
+    expect(filterMessage(msg('Thanks for your order - Order #658817540')).decision).toBe('skip');
+  });
+});

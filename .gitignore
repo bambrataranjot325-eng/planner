@@ -1,0 +1,6 @@
+.env
+reports/
+node_modules/
+dist/
+*.zip
+client_secret*.json

@@ -1,0 +1,18 @@
+{
+  "prompt_version": "extract.v3",
+  "first_pass": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "usd_per_mtok_in": 3.0,
+    "usd_per_mtok_out": 15.0
+  },
+  "escalation": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "usd_per_mtok_in": 3.0,
+    "usd_per_mtok_out": 15.0
+  },
+  "escalate_below_confidence": 0,
+  "review_below_confidence": 0.6,
+  "max_body_chars": 6000
+}

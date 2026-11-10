@@ -1,0 +1,20 @@
+services:
+  worker:
+    build: ./worker
+    env_file: .env
+    restart: unless-stopped
+    # No ports: the worker only makes outbound calls (Gmail, Supabase, the AI providers).
+    volumes:
+      - ./reports:/app/reports
+      - ./worker/prompts:/app/prompts:ro   # edit a prompt, then `make restart`; no rebuild
+      - ./worker/config:/app/config:ro
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/planner-heartbeat) )) -lt 2400"]
+      interval: 5m
+      timeout: 10s
+      start_period: 30m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
