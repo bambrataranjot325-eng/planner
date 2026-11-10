@@ -54,6 +54,8 @@ const Env = z.object({
   OAUTH_REDIRECT_URI: z.string().url().default('http://localhost:53682/oauth/callback'),
   BRIGHTSPACE_FEED_URL: z.string().url().optional(),
   BRIGHTSPACE_MINUTES: z.coerce.number().int().min(5).default(60),
+  // Push services ask for a contact address in case a sender misbehaves. Any address of yours.
+  PUSH_CONTACT: z.string().regex(/^(mailto:|https:\/\/)/).default('mailto:planner@example.com'),
 });
 export type Env = z.infer<typeof Env> & { MODE: Mode };
 

@@ -25,7 +25,7 @@ calendar items. Phase 1 has no app yet: you look at results in a report file and
 
 ### 1. Supabase
 
-1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql`, `0004_realtime_and_trash.sql`, `0005_possible_items.sql`, `0006_projects.sql`, `0007_project_links.sql` and `0008_assistant.sql` (the file contents, not the file names).
+1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql`, `0004_realtime_and_trash.sql`, `0005_possible_items.sql`, `0006_projects.sql`, `0007_project_links.sql`, `0008_assistant.sql` and `0009_notifications_widget.sql` (the file contents, not the file names).
 2. **Authentication > Users > Add user**: create a user with your email. Copy its **UID**.
 3. **Project Settings > API**: copy the project URL and the secret (service role) key.
 
@@ -173,10 +173,10 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
 ## Tests
 
 ```
-make test                 # 114 unit tests
+make test                 # 119 unit tests
 ./scripts/test-sql.sh     # needs a local Postgres; runs the migration and the security tests
 ```
 
 ## Not in Phase 1
 
-Alerts are rows in a table; nothing notifies you yet. No backups or server hardening changes yet. See the open questions in the chat.
+No backups or server hardening changes yet. See the open questions in the chat.

@@ -88,3 +88,27 @@ do $$ declare n int; begin
   raise notice 'RLS ok: the conversation and the batch are private';
 end $$;
 reset role; reset request.jwt.claim.sub;
+
+-- push: the private key is out of reach of signed-in users; each person sees only their own devices
+set role service_role;
+do $$ begin
+  perform set_app_secret('push:private', 'k1');
+  perform set_app_secret('push:private', 'k2');
+  if get_app_secret('push:private') <> 'k2' then raise exception 'SECRET FAIL'; end if;
+end $$;
+reset role;
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+insert into push_subscriptions (user_id, endpoint, p256dh, auth) values ('aaaaaaaa-0000-0000-0000-000000000001', 'https://push.example/a', 'p', 'a');
+update user_settings set remind_minutes = 15, widget_token = 'tok-a';
+do $$ begin
+  begin perform get_app_secret('push:private'); raise exception 'FAIL: user read the push private key';
+  exception when insufficient_privilege then raise notice 'Push ok: the private key is unreadable by signed-in users'; end;
+end $$;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000002';
+do $$ declare n int; begin
+  select count(*) into n from push_subscriptions; if n <> 0 then raise exception 'RLS FAIL: B sees A''s devices'; end if;
+  select count(*) into n from user_settings where widget_token is not null; if n <> 0 then raise exception 'RLS FAIL: B sees A''s widget token'; end if;
+  raise notice 'RLS ok: devices and the widget token are private';
+end $$;
+reset role; reset request.jwt.claim.sub;

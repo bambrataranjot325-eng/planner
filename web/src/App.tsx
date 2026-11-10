@@ -2,6 +2,7 @@ import type { Session } from '@supabase/supabase-js';
 import { DateTime } from 'luxon';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Assistant } from './components/Assistant';
+import { SettingsPanel } from './components/Settings';
 import { ChevronLeft, ChevronRight, IconAgenda, IconMonth, IconProjects, IconToday, IconWeek, Plus, Sliders, Sparkle, Tray } from './components/Icons';
 import { NewProject, ProfileEditor, ProjectDetail, ProjectsView } from './components/Projects';
 import { DEFAULT_PROFILE, type Profile } from './lib/planner';
@@ -13,7 +14,7 @@ import { clearCache, isDemo, makeSource, readCache, supabase, writeCache } from 
 import { groupByDay, matchesFilters, now, weekDays } from './lib/dates';
 import { NO_FILTERS, type Filters, type Item, type ItemDraft, type Project, type ProjectPlan, type ViewName } from './lib/types';
 
-type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new'; seedId?: string } | { kind: 'profile' } | { kind: 'assistant' } | null;
+type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new'; seedId?: string } | { kind: 'profile' } | { kind: 'assistant' } | { kind: 'settings' } | null;
 interface Toast { text: string; action?: { label: string; run: () => void } }
 
 const VIEWS: { name: ViewName; label: string; icon: () => React.ReactNode }[] = [
@@ -128,6 +129,18 @@ function Calendar({ session }: { session: Session | null }) {
 
   const shared = { items, projects: proj.projects, plans: proj.plans, profile, data, reload: load, say, mutate };
   const openProject = sheet?.kind === 'project' ? proj.projects.find((p) => p.id === sheet.id) ?? null : null;
+  // Links from a notification (?item=...) or the widget (?assistant) open the right thing once data is here.
+  const linked = useRef(false);
+  useEffect(() => {
+    if (linked.current) return;
+    const q = new URLSearchParams(location.search);
+    const id = q.get('item');
+    if (q.has('assistant')) { linked.current = true; setSheet({ kind: 'assistant' }); }
+    else if (id && items.some((i) => i.id === id)) { linked.current = true; setSheet({ kind: 'item', id, editing: false, at: now() }); }
+    else if (!id) linked.current = true;
+    if (linked.current && (id || q.has('assistant'))) history.replaceState(null, '', location.pathname + (q.has('demo') ? '?demo' : ''));
+  }, [items]);
+
   // If the thing a sheet was showing is gone (deleted here or on another device), close the sheet
   // properly; otherwise it would vanish while the app still believed it was open.
   useEffect(() => {
@@ -166,7 +179,7 @@ function Calendar({ session }: { session: Session | null }) {
 
   return (
     <div className="app">
-      <Sidebar items={items} filters={filters} setFilters={setFilters} reviewCount={review.length} onOpenReview={() => setSheet({ kind: 'review' })} email={session?.user.email ?? null} status={status}
+      <Sidebar items={items} filters={filters} setFilters={setFilters} reviewCount={review.length} onOpenReview={() => setSheet({ kind: 'review' })} email={session?.user.email ?? null} status={status} onSettings={() => setSheet({ kind: 'settings' })}
         onSignOut={() => { clearCache(); void supabase?.auth.signOut(); }} />
 
       <main className="main">
@@ -229,9 +242,10 @@ function Calendar({ session }: { session: Session | null }) {
       {sheet?.kind === 'project' && openProject && <Sheet key={`project-${openProject.id}`} label={openProject.name} wide onClosed={() => setSheet(null)}>{(close) => <ProjectDetail project={openProject} shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'profile' && <Sheet label="Planning settings" wide onClosed={() => setSheet(null)}>{(close) => <ProfileEditor shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'assistant' && <Sheet key="assistant" label="Assistant" wide onClosed={() => setSheet(null)}>{(close) => <Assistant shared={shared} close={close} />}</Sheet>}
+      {sheet?.kind === 'settings' && <Sheet key="settings" label="Notifications and widget" wide onClosed={() => setSheet(null)}>{(close) => <SettingsPanel data={data} say={say} close={close} />}</Sheet>}
       {sheet?.kind === 'filters' && (
         <Sheet label="Filters" onClosed={() => setSheet(null)}>
-          {(close) => (<><header className="sheet-bar"><b>Show on calendar</b><button className="btn-text is-strong" onClick={close}>Done</button></header><FilterList items={items} filters={filters} setFilters={setFilters} /></>)}
+          {(close) => (<><header className="sheet-bar"><b>Show on calendar</b><button className="btn-text is-strong" onClick={close}>Done</button></header><FilterList items={items} filters={filters} setFilters={setFilters} /><button className="btn btn-wide" style={{ marginTop: '1.25rem' }} onClick={() => setSheet({ kind: 'settings' })}>Notifications and widget</button></>)}
         </Sheet>
       )}
 

@@ -10,6 +10,8 @@ const wantsDemo = new URLSearchParams(location.search).has('demo');
 
 /** No keys configured (or ?demo): run on sample data so the app can be looked at without an account. */
 export const isDemo = wantsDemo || !url || !key || url.includes('YOUR-PROJECT');
+/** Where this project's Edge Functions live (used to build the widget's address). */
+export const functionsUrl = isDemo ? 'https://YOUR-PROJECT.supabase.co/functions/v1' : `${url!.replace(/\/$/, '')}/functions/v1`;
 export const supabase: SupabaseClient | null = isDemo ? null : createClient(url!, key!);
 
 export interface DataSource {
@@ -29,6 +31,11 @@ export interface DataSource {
   applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]): Promise<void>;
   /** Ask the AI to break the project into milestones with hours. Throws if it is unavailable. */
   estimate(input: EstimateInput): Promise<{ milestones: { title: string; hours: number }[]; rationale: string }>;
+  settings(): Promise<AppSettings>;
+  saveSettings(patch: Partial<AppSettings> & { push_test_at?: string }): Promise<void>;
+  /** Register or forget this device for push notifications. */
+  pushSubscribe(sub: PushSub): Promise<void>;
+  pushUnsubscribe(endpoint: string): Promise<void>;
   /** The saved assistant conversation, oldest first. */
   chat(): Promise<ChatMessage[]>;
   /** Send a message (and files) to the assistant. Returns its reply; nothing on the calendar changes. */
@@ -44,6 +51,8 @@ export interface DataSource {
 export interface EstimateInput { name: string; description: string; course: string | null; deadline: string | null; item_ids: string[]; background?: string | null }
 
 export type ProjectDraft = Pick<Project, 'name' | 'description' | 'course' | 'deadline' | 'granularity' | 'background'>;
+export interface AppSettings { remind_minutes: number; daily_summary_time: string | null; push_public_key: string | null; widget_token: string | null }
+export interface PushSub { endpoint: string; p256dh: string; auth: string; device: string }
 export interface Attachment { name: string; media_type: string; data: string } // data is base64
 export interface PlanMeta {
   deadline: string; total_minutes: number; buffer_pct: number; granularity: 'daily' | 'weekly'; made_by: 'ai' | 'manual';
@@ -120,6 +129,19 @@ class SupabaseSource implements DataSource {
     if (!data?.milestones?.length) throw new Error('The AI returned no plan');
     return data as { milestones: { title: string; hours: number }[]; rationale: string };
   }
+  async settings() {
+    const row = must(await this.sb.from('user_settings').select('remind_minutes, daily_summary_time, push_public_key, widget_token').eq('user_id', this.userId).maybeSingle()) as AppSettings | null;
+    return row ?? { remind_minutes: 30, daily_summary_time: '08:00', push_public_key: null, widget_token: null };
+  }
+  async saveSettings(patch: Partial<AppSettings> & { push_test_at?: string }) {
+    must(await this.sb.from('user_settings').update(patch).eq('user_id', this.userId).select('user_id'));
+  }
+  async pushSubscribe(sub: PushSub) {
+    must(await this.sb.from('push_subscriptions').upsert({ ...sub, user_id: this.userId }, { onConflict: 'endpoint' }).select('id'));
+  }
+  async pushUnsubscribe(endpoint: string) {
+    must(await this.sb.from('push_subscriptions').delete().eq('endpoint', endpoint).select('id'));
+  }
   async chat() {
     const rows = must(await this.sb.from('chat_messages').select('*').order('created_at', { ascending: false }).limit(80)) as ChatMessage[];
     return rows.reverse();
@@ -186,6 +208,11 @@ class DemoSource implements DataSource {
   }
   subscribe() { return () => {}; }
 
+  private st: AppSettings = { remind_minutes: 30, daily_summary_time: '08:00', push_public_key: null, widget_token: null };
+  async settings() { return this.st; }
+  async saveSettings(patch: Partial<AppSettings>) { this.st = { ...this.st, ...patch }; }
+  async pushSubscribe() {}
+  async pushUnsubscribe() {}
   private msgs: ChatMessage[] = [];
   async chat() { return this.msgs; }
   async chatSend(text: string, attachments: Attachment[]) {

@@ -17,3 +17,8 @@ alter default privileges in schema public grant all on tables to anon, authentic
 alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
 grant usage on schema public to anon, authenticated, service_role;
+
+-- pg_cron stand-in
+create schema cron;
+create function cron.schedule(job text, sched text, cmd text) returns bigint language sql as $$ select 1::bigint $$;
+grant usage on schema cron to anon, authenticated, service_role;

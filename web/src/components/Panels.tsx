@@ -41,7 +41,7 @@ export function FilterList({ items, filters, setFilters }: { items: Item[]; filt
 interface SidebarProps {
   items: Item[]; filters: Filters; setFilters: (f: Filters) => void;
   reviewCount: number; onOpenReview: () => void;
-  email: string | null; onSignOut: () => void; status: string;
+  email: string | null; onSignOut: () => void; status: string; onSettings: () => void;
 }
 
 export function Sidebar(p: SidebarProps) {
@@ -56,6 +56,7 @@ export function Sidebar(p: SidebarProps) {
         <FilterList items={p.items} filters={p.filters} setFilters={p.setFilters} />
       </div>
       <div className="sidebar-foot">
+        <button className="btn-text" onClick={p.onSettings}>Notifications and widget</button>
         <span>{p.status}</span>
         {p.email ? <button className="btn-text" onClick={p.onSignOut}>Sign out {p.email}</button> : <span>Sample data. Nothing is saved.</span>}
       </div>

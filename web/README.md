@@ -65,6 +65,30 @@ For the email to contain one, edit the template once in Supabase:
 <p>Type this code into the app. In a browser you can instead <a href="{{ .ConfirmationURL }}">sign in with this link</a>.</p>
 ```
 
+## Notifications
+
+Reminders before timed items (30 minutes by default), a morning summary, and warnings such as an inbox that
+needs signing in again. They are sent by the worker on the server, so they arrive with every device closed.
+
+1. Run `supabase/migrations/0009_notifications_widget.sql` and redeploy the worker (`make deploy`).
+2. On each device, open **Notifications and widget** (bottom of the sidebar, or the filters sheet on a
+   phone) and choose **Turn on**. A test notification arrives within a minute.
+3. On an iPhone this only works from the Home Screen app, not from a Safari tab.
+
+Possible events never send reminders. Change the lead time or the summary time in the same panel.
+
+## Home Screen widget
+
+iOS only lets native apps provide widgets, so this uses the free **Scriptable** app to draw one.
+
+1. Deploy `supabase/functions/widget/index.ts` as an Edge Function named exactly `widget`, and turn **off**
+   "Verify JWT" for it in the function's settings (the widget has no sign-in; it uses its own key instead).
+2. In the app, open **Notifications and widget**, choose **Set up the widget**, and follow the four steps.
+
+The widget shows today, then tomorrow if there is room, and refreshes roughly every 15 minutes when iOS
+allows. Tapping it opens the app. With no connection it shows its last copy. If the key ever leaks, choose
+**Replace** and copy the script again; the old one stops working.
+
 ## Assistant
 
 The sparkle button opens a chat that stays the same across your devices. Describe something

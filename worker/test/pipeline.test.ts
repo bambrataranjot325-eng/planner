@@ -657,3 +657,53 @@ describe('brightspace: shapes seen in the real NYU feed', () => {
     expect(course('Info Technology in Business & Society Fall 2026')).toBe('Info Technology in Business & Society Fall 2026');
   });
 });
+
+import { dailyNote, reminderNotes, type NotifyItem } from '../src/notify/plan.js';
+describe('notifications', () => {
+  const S = { timezone: SYD, remind_minutes: 30, daily_summary_time: '08:00' };
+  const it0 = (p: Partial<NotifyItem>): NotifyItem => ({ id: 'i1', title: 'Design review', kind: 'event', start_at: null, end_at: null, due_at: null, all_day: false, due_precision: null, location: null, status: 'open', optional: false, timezone: null, ...p });
+  const at = (s: string) => new Date(s);
+
+  it('reminds 30 minutes before a timed event, and not earlier or after it has started', () => {
+    const ev = it0({ start_at: '2026-11-12T04:00:00Z', location: 'Room 204' }); // 3:00 PM Sydney
+    expect(reminderNotes([ev], S, at('2026-11-12T03:29:00Z'))).toEqual([]);
+    const [n] = reminderNotes([ev], S, at('2026-11-12T03:30:00Z'));
+    expect(n).toEqual({ key: 'rem:i1:2026-11-12T04:00:00Z', title: 'Design review', body: 'Starts in 30 minutes, at 3:00 PM. Room 204', url: '/?item=i1', tag: 'item-i1' });
+    expect(reminderNotes([ev], S, at('2026-11-12T03:55:00Z'))[0]!.body).toContain('in 5 minutes');
+    expect(reminderNotes([ev], S, at('2026-11-12T04:00:00Z'))).toEqual([]);
+  });
+  it('a rescheduled event gets a new key, so it is reminded again at its new time', () => {
+    const a = reminderNotes([it0({ start_at: '2026-11-12T04:00:00Z' })], S, at('2026-11-12T03:40:00Z'))[0]!.key;
+    const b = reminderNotes([it0({ start_at: '2026-11-13T04:00:00Z' })], S, at('2026-11-13T03:40:00Z'))[0]!.key;
+    expect(a).not.toBe(b);
+  });
+  it('tasks with an exact time remind; date-only tasks, all-day events, possibles and done items do not', () => {
+    const t = at('2026-11-12T03:40:00Z'), when = '2026-11-12T04:00:00Z';
+    expect(reminderNotes([it0({ kind: 'task', due_at: when, due_precision: 'exact', title: 'Submit lab 3' })], S, t)[0]!.body).toBe('Due in 20 minutes, at 3:00 PM');
+    expect(reminderNotes([it0({ kind: 'task', due_at: when, due_precision: 'date_only' })], S, t)).toEqual([]);
+    expect(reminderNotes([it0({ start_at: when, all_day: true })], S, t)).toEqual([]);
+    expect(reminderNotes([it0({ start_at: when, optional: true })], S, t)).toEqual([]);
+    expect(reminderNotes([it0({ start_at: when, status: 'done' })], S, t)).toEqual([]);
+    expect(reminderNotes([it0({ start_at: when })], { ...S, remind_minutes: 0 }, t)).toEqual([]);
+  });
+  it('the morning summary is sent at the chosen local time, once per local day, and not hours late', () => {
+    const items = [
+      it0({ id: 'a', title: 'Data Structures lecture', start_at: '2026-11-11T22:30:00Z' }), // 9:30 AM Thu 12 Nov, Sydney
+      it0({ id: 'b', title: 'Joji concert', start_at: '2026-11-12T08:00:00Z' }),
+      it0({ id: 'c', kind: 'task', title: 'Submit blog post', due_at: '2026-11-12T12:59:00Z', due_precision: 'date_only' }),
+      it0({ id: 'd', kind: 'task', title: 'Old thing', due_at: '2026-11-10T12:59:00Z', due_precision: 'date_only' }),
+      it0({ id: 'e', title: 'A possible', start_at: '2026-11-12T01:00:00Z', optional: true }),
+    ];
+    expect(dailyNote(items, S, at('2026-11-11T20:59:00Z'))).toBeNull(); // 7:59 AM
+    const n = dailyNote(items, S, at('2026-11-11T21:00:00Z'))!; // 8:00 AM
+    expect(n).toMatchObject({ key: 'daily:2026-11-12', title: 'Thursday 12 November', body: '2 events and 1 task due today. First: Data Structures lecture at 9:30 AM. 1 task overdue.' });
+    expect(dailyNote(items, S, at('2026-11-12T00:30:00Z'))).toBeNull(); // 11:30 AM is too late to say good morning
+    expect(dailyNote(items, { ...S, daily_summary_time: null }, at('2026-11-11T21:00:00Z'))).toBeNull();
+  });
+  it('an empty day sends nothing, and the day is judged in my timezone, not UTC', () => {
+    expect(dailyNote([], S, at('2026-11-11T21:00:00Z'))).toBeNull();
+    const ny = { ...S, timezone: NY };
+    const lateEvening = it0({ start_at: '2026-11-12T03:00:00Z' }); // 10 PM Wed 11 Nov in New York, already the 12th in UTC
+    expect(dailyNote([lateEvening], ny, at('2026-11-11T13:00:00Z'))!.key).toBe('daily:2026-11-11');
+  });
+});

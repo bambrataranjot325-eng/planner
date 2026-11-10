@@ -8,6 +8,7 @@ import { utcToLocal } from './pipeline/dates.js';
 import { authCommand } from './cli/auth.js';
 import { evalFixtures, previewFixtures } from './cli/fixtures.js';
 import { requestStop, runOnce } from './run.js';
+import { startNotifier } from './notify/send.js';
 
 const HEARTBEAT = '/tmp/planner-heartbeat';
 
@@ -75,6 +76,7 @@ async function main(): Promise<void> {
     let stopping = false;
     process.on('SIGTERM', () => { stopping = true; requestStop(); });
     process.on('SIGINT', () => { stopping = true; requestStop(); });
+    if (env.MODE === 'live') startNotifier(new Db(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, env.USER_ID), env.DEFAULT_TIMEZONE, env.PUSH_CONTACT, () => stopping);
     while (!stopping) {
       try {
         await runOnce(env);
