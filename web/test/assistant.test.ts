@@ -27,6 +27,13 @@ describe('turning a proposal into calendar rows', () => {
   it('a runaway repeat is capped', () => {
     expect(expandAdd({ title: 'Daily', kind: 'event', start_local: '2027-01-01T09:00', repeat: { weekdays: [1, 2, 3, 4, 5, 6, 7], until: '2029-01-01' } }, Z)).toHaveLength(60);
   });
+  it('a proposal with values the database would reject is tidied, not refused (seen live: kind "work session")', () => {
+    const odd = { title: 'Info Tech Final Review: Review case studies', kind: 'work session', start_local: '2026-11-12T22:00', end_local: '2026-11-13T00:00', category: 'revision', priority: 'urgent' } as unknown as ProposedAdd;
+    expect(expandAdd(odd, Z)[0]).toMatchObject({ kind: 'event', category: 'other', priority: 'medium', start_at: '2026-11-12T11:00:00Z', end_at: '2026-11-12T13:00:00Z' });
+    expect(describeAdd(odd, Z)).toBe('Thu 12 Nov, 10:00 PM to 12:00 AM');
+    expect(expandAdd({ title: 'Submit', kind: 'Task', due_local: '2026-11-20' } as unknown as ProposedAdd, Z)[0]!.kind).toBe('task');
+    expect(updatePatch({ id: 'i', status: 'finished', category: 'x', priority: 'y' } as never, item({}), Z)).toEqual({});
+  });
   it('tasks: a date-only deadline means the end of that day; no date is allowed', () => {
     expect(expandAdd({ title: 'Submit lab 3', kind: 'task', due_local: '2026-11-20' }, Z)[0]).toMatchObject({ due_at: '2026-11-20T12:59:00Z', due_precision: 'date_only', start_at: null });
     expect(expandAdd({ title: 'Submit lab 3', kind: 'task', due_local: '2026-11-20T17:00' }, Z)[0]).toMatchObject({ due_at: '2026-11-20T06:00:00Z', due_precision: 'exact' });

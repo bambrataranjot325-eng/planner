@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { Category, Item, Kind, Priority } from './types';
+import { CATEGORIES, PRIORITIES, type Category, type Item, type Kind, type Priority } from './types';
 
 /* What the assistant may propose, and how a proposal becomes calendar rows. Pure functions, so the
    conversion from "Mon and Wed 9:30 until 11 Dec" to real events is tested, not left to the model. */
@@ -42,8 +42,19 @@ function occurrences(first: DateTime, repeat: ProposedAdd['repeat']): DateTime[]
   return out.length ? out : [first];
 }
 
+/**
+ * The model does not always keep to the allowed values (it has called a study block a "work session").
+ * Anything that is not a task is an event, and unknown categories or priorities fall back to defaults,
+ * so a slightly-off proposal is still usable instead of being rejected by the database.
+ */
+export function tidyAdd(a: ProposedAdd): ProposedAdd {
+  const kind: Kind = String(a.kind ?? '').toLowerCase().trim() === 'task' ? 'task' : 'event';
+  return { ...a, title: String(a.title ?? ''), kind, category: CATEGORIES.includes(a.category as Category) ? a.category : 'other', priority: PRIORITIES.includes(a.priority as Priority) ? a.priority : 'medium' };
+}
+
 /** One proposed addition as calendar rows: a single row, or one per week for a repeating class. */
-export function expandAdd(a: ProposedAdd, deviceZone: string): NewRow[] {
+export function expandAdd(raw: ProposedAdd, deviceZone: string): NewRow[] {
+  const a = tidyAdd(raw);
   const zone = validZone(a.timezone) ?? deviceZone;
   const base = { title: a.title.trim().slice(0, 80), summary: a.notes?.trim() || null, kind: a.kind, location: a.location?.trim() || null, course: a.course?.trim() || null, category: a.category ?? 'other', priority: a.priority ?? 'medium', timezone: validZone(a.timezone) } as const;
   if (!base.title) return [];
@@ -67,7 +78,8 @@ export function expandAdd(a: ProposedAdd, deviceZone: string): NewRow[] {
 }
 
 /** How a proposed addition reads on the card. */
-export function describeAdd(a: ProposedAdd, deviceZone: string): string {
+export function describeAdd(raw: ProposedAdd, deviceZone: string): string {
+  const a = tidyAdd(raw);
   const rows = expandAdd(a, deviceZone);
   if (!rows.length) return 'No date given, so it cannot be placed';
   const zone = validZone(a.timezone) ?? deviceZone;
@@ -94,10 +106,10 @@ export function updatePatch(u: ProposedUpdate, item: Item, deviceZone: string): 
   if (u.title?.trim()) patch.title = u.title.trim().slice(0, 80);
   if (u.location !== undefined) patch.location = u.location?.trim() || null;
   if (u.notes !== undefined) patch.summary = u.notes?.trim() || null;
-  if (u.status) patch.status = u.status;
+  if (u.status === 'open' || u.status === 'done') patch.status = u.status;
   if (u.course !== undefined) patch.course = u.course?.trim() || null;
-  if (u.category) patch.category = u.category;
-  if (u.priority) patch.priority = u.priority;
+  if (u.category && CATEGORIES.includes(u.category)) patch.category = u.category;
+  if (u.priority && PRIORITIES.includes(u.priority)) patch.priority = u.priority;
   const start = parse(u.start_local, zone), end = parse(u.end_local, zone), due = parse(u.due_local, zone);
   if (item.kind === 'event') {
     if (start) {

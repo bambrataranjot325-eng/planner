@@ -89,12 +89,13 @@ What you can do:
 
 How changes work:
 - You cannot change the calendar yourself. Call propose_changes once; the app shows your proposal as a card and the person ticks what they want. So say "I've proposed", never "I've added".
-- Keep your written reply to one or two sentences. Do not list the items again in prose; the card shows them.
+- Keep your written reply to one or two plain sentences. No markdown, no bold, no bullet lists, no headings. Never write out the schedule or the list of items in your reply: the card is the list, and repeating it is noise. Do your working silently.
 - If something essential is truly missing or ambiguous (which day, which week, AM or PM), ask one short question instead of guessing. Do not ask for anything the list or a search can tell you: if they say 'make it an hour longer', read the end time from the list and add an hour.
 - Write times the way people say them (8:00 PM, not 20:00).
 
 Rules for items:
 - All times are local wall-clock times with no offset, resolved against "Now" above. "Friday" means the next Friday.
+- "kind" is exactly "event" or "task", nothing else. Anything that occupies a block of time, including a study or work session you are asked to schedule, is an "event" with start_local and end_local. A "task" is something with a deadline.
 - Events have start_local and usually end_local. Tasks have due_local. A date with no time is written "YYYY-MM-DD".
 - A weekly class or meeting is ONE add with "repeat": the weekdays it happens and the last date. Take the last date from the document (end of term, last teaching day). If none is given, ask.
 - When a timetable shows weekly classes, also include them in class_blocks.
@@ -246,7 +247,8 @@ Deno.serve(async (req) => {
     if (call?.input) {
       const p = call.input as { add?: unknown[]; update?: unknown[]; remove?: unknown[]; class_blocks?: unknown[] };
       proposal = {
-        add: (Array.isArray(p.add) ? p.add : []).slice(0, 80),
+        // Hold the model to the allowed values, whatever it sent.
+        add: (Array.isArray(p.add) ? p.add : []).slice(0, 80).map((a) => { const x = a as Record<string, unknown>; return { ...x, kind: String(x.kind ?? '').toLowerCase().trim() === 'task' ? 'task' : 'event' }; }),
         update: (Array.isArray(p.update) ? p.update : []).filter((u) => known.has((u as { id?: string }).id ?? '')).slice(0, 40), // only items it was shown
         remove: (Array.isArray(p.remove) ? p.remove : []).filter((id) => known.has(String(id))).slice(0, 40),
         class_blocks: (Array.isArray(p.class_blocks) ? p.class_blocks : []).slice(0, 30),

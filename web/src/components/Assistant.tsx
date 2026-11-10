@@ -10,6 +10,9 @@ interface Shared { items: Item[]; profile: Profile; data: DataSource; reload: ()
 const MAX_BYTES = 4_500_000;
 const SUGGESTIONS = ['Dentist on Thursday at 3pm', 'What is due this week?', 'Move my next meeting to Friday at 10'];
 
+/** Replies are shown as plain text; strip the markdown a model sometimes adds anyway. */
+const plain = (s: string) => s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/^#{1,4}\s+/gm, '').replace(/^\s*[-*]\s+/gm, '\u2022 ').replace(/`([^`]+)`/g, '$1');
+
 function readFile(file: File): Promise<Attachment> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -159,7 +162,7 @@ export function Assistant({ shared, close }: { shared: Shared; close: () => void
             {(m.content || m.attachments.length > 0) && (
               <div className="bubble">
                 {m.attachments.map((n) => <span className="file-chip" key={n}><Paperclip />{n}</span>)}
-                {m.content}
+                {m.role === 'assistant' ? plain(m.content) : m.content}
               </div>
             )}
             {m.proposal && <ProposalCard message={m} shared={shared} onState={setState} />}
