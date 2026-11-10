@@ -51,12 +51,46 @@ Every later `git push` redeploys, and pull requests get their own preview addres
   or Not interested. Untick "Possible events" in the sidebar to hide them all.
 - **Filters:** untick a category, course, source or priority to hide it. On a phone, the sliders button.
 
+## Signing in on a Home Screen app
+
+An app added to the iPhone Home Screen keeps its own sign-in, separate from Safari. A link in an email
+opens Safari, so it can never sign in the Home Screen app. The app therefore asks for a **code**.
+For the email to contain one, edit the template once in Supabase:
+
+**Authentication > Emails > Templates > Magic Link**, replace the body with:
+
+```html
+<h2>Your Planner sign-in code</h2>
+<p style="font-size: 26px; letter-spacing: 4px;"><b>{{ .Token }}</b></p>
+<p>Type this code into the app. In a browser you can instead <a href="{{ .ConfirmationURL }}">sign in with this link</a>.</p>
+```
+
+## Assistant
+
+The sparkle button opens a chat that stays the same across your devices. Describe something
+("dentist Thursday 3pm", "move my registration meeting to Friday"), ask about your calendar, or attach a
+timetable, syllabus or exam schedule as a PDF or photo.
+
+- **You approve everything:** each suggestion is a card with a tick per item. Nothing changes until you
+  choose Apply, and **Undo additions** moves everything that card added to Trash.
+- **Weekly classes:** a class with a last date becomes one event per week. Each is a separate event, so
+  editing one does not change the rest. The card also offers to save class times to Planning settings.
+- **Files are not kept:** an attachment is sent to the AI for that one message and discarded. Limit: three
+  files, about 4.5 MB in total.
+- **Cost:** each message is an AI call (a few cents; more for long PDFs) and counts toward the monthly cap.
+
+Setup, once: run `supabase/migrations/0008_assistant.sql`, then deploy
+`supabase/functions/assistant/index.ts` as an Edge Function named exactly `assistant`, the same way as
+`plan-project`. It uses the `ANTHROPIC_API_KEY` secret you already saved.
+
 ## Projects
 
 The Projects tab turns a piece of work into a timeline. Describe it, give a deadline or ask for one to be
 suggested, and choose daily sessions or weekly targets. The app proposes milestones and work sessions;
 nothing goes on the calendar until you choose **Add to calendar**.
 
+- **Background:** paste an earlier chat about the project, the brief or your notes into the Background box.
+  The estimate reads it.
 - **Related items:** attach the deadline, exam or emails a project is about, either while creating it or
   from any item's page with **Plan this as a project**. The estimate reads those items and the emails they
   came from, and a deadline you attach fills in the project's due date. Deleting a project keeps them.

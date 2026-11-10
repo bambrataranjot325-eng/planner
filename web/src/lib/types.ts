@@ -36,6 +36,7 @@ export interface Item {
   plan_id?: string | null;
   planned_minutes?: number | null;
   actual_minutes?: number | null;
+  import_batch?: string | null;
   overridden_fields: string[];
   ai_values: Record<string, unknown>;
   deleted_at: string | null;
@@ -105,6 +106,8 @@ export interface Project {
   deadline: string | null;
   granularity: 'daily' | 'weekly';
   status: 'open' | 'done' | 'archived';
+  /** Pasted context for the estimate: an earlier chat, the brief, notes. */
+  background?: string | null;
   current_plan_id: string | null;
   created_at: string;
 }

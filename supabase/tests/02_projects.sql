@@ -66,3 +66,25 @@ do $$ declare kept int; sessions int; linked uuid; begin
   raise notice 'Delete ok: the attached email item was kept and unlinked, the sessions were removed';
 end $$;
 reset role; reset request.jwt.claim.sub;
+
+-- assistant: my conversation is private, and a batch of imported items can be found and trashed together
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+insert into chat_messages (user_id, role, content) values ('aaaaaaaa-0000-0000-0000-000000000001', 'user', 'add my timetable');
+insert into items (user_id, title, kind, origin, start_at, import_batch) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Lecture wk1', 'event', 'manual', '2099-01-05T00:00:00Z', 'cccccccc-0000-0000-0000-000000000001'),
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Lecture wk2', 'event', 'manual', '2099-01-12T00:00:00Z', 'cccccccc-0000-0000-0000-000000000001');
+do $$ declare n int; begin
+  update items set deleted_at = now() where import_batch = 'cccccccc-0000-0000-0000-000000000001';
+  get diagnostics n = row_count;
+  if n <> 2 then raise exception 'BATCH FAIL: undo touched % rows', n; end if;
+  raise notice 'Batch ok: one undo trashed both imported items';
+end $$;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000002';
+do $$ declare n int; begin
+  select count(*) into n from chat_messages; if n <> 0 then raise exception 'RLS FAIL: B can read A''s conversation'; end if;
+  update items set deleted_at = null where import_batch = 'cccccccc-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 0 then raise exception 'RLS FAIL: B could touch A''s batch'; end if;
+  raise notice 'RLS ok: the conversation and the batch are private';
+end $$;
+reset role; reset request.jwt.claim.sub;

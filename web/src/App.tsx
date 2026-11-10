@@ -1,7 +1,8 @@
 import type { Session } from '@supabase/supabase-js';
 import { DateTime } from 'luxon';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, IconAgenda, IconMonth, IconProjects, IconToday, IconWeek, Plus, Sliders, Tray } from './components/Icons';
+import { Assistant } from './components/Assistant';
+import { ChevronLeft, ChevronRight, IconAgenda, IconMonth, IconProjects, IconToday, IconWeek, Plus, Sliders, Sparkle, Tray } from './components/Icons';
 import { NewProject, ProfileEditor, ProjectDetail, ProjectsView } from './components/Projects';
 import { DEFAULT_PROFILE, type Profile } from './lib/planner';
 import { ItemDetail, ItemEditor } from './components/ItemSheet';
@@ -12,7 +13,7 @@ import { clearCache, isDemo, makeSource, readCache, supabase, writeCache } from 
 import { groupByDay, matchesFilters, now, weekDays } from './lib/dates';
 import { NO_FILTERS, type Filters, type Item, type ItemDraft, type Project, type ProjectPlan, type ViewName } from './lib/types';
 
-type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new'; seedId?: string } | { kind: 'profile' } | null;
+type SheetState = { kind: 'item'; id: string | null; at: DateTime; editing: boolean } | { kind: 'review' } | { kind: 'filters' } | { kind: 'project'; id: string } | { kind: 'project-new'; seedId?: string } | { kind: 'profile' } | { kind: 'assistant' } | null;
 interface Toast { text: string; action?: { label: string; run: () => void } }
 
 const VIEWS: { name: ViewName; label: string; icon: () => React.ReactNode }[] = [
@@ -143,6 +144,7 @@ function Calendar({ session }: { session: Session | null }) {
       const el = e.target as HTMLElement;
       if (sheet || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
       if (e.key === 't') setCursor(now().startOf('day'));
+      else if (e.key === 'a') setSheet({ kind: 'assistant' });
       else if (e.key === 'n') view === 'projects' ? setSheet({ kind: 'project-new' }) : newItem();
       else if (e.key === 'ArrowLeft' && dated) step(-1);
       else if (e.key === 'ArrowRight' && dated) step(1);
@@ -183,6 +185,7 @@ function Calendar({ session }: { session: Session | null }) {
             </div>
             <button className="btn-icon only-phone" onClick={() => setSheet({ kind: 'review' })} aria-label={`Needs review, ${review.length}`} disabled={!review.length}><Tray />{review.length > 0 && <sup>{review.length}</sup>}</button>
             <button className="btn-icon only-phone" onClick={() => setSheet({ kind: 'filters' })} aria-label="Filters"><Sliders />{hiddenCount > 0 && <sup>{hiddenCount}</sup>}</button>
+            <button className="btn-icon assist-btn" onClick={() => setSheet({ kind: 'assistant' })} aria-label="Assistant"><Sparkle /></button>
             <button className="btn-icon is-accent" onClick={() => (view === 'projects' ? setSheet({ kind: 'project-new' }) : newItem())} aria-label={view === 'projects' ? 'New project' : 'New event or task'}><Plus /></button>
           </div>
         </header>
@@ -197,6 +200,7 @@ function Calendar({ session }: { session: Session | null }) {
             : <div className="agenda"><div className="empty"><b>Projects need a database update</b><span>Run 0006_projects.sql in the Supabase SQL editor, then reload this page.</span></div></div>)}
         </div>
 
+        <button className="assist-fab" onClick={() => setSheet({ kind: 'assistant' })} aria-label="Assistant"><Sparkle /></button>
         <nav className="tabbar" aria-label="View">
           {VIEWS.map((v) => <button key={v.name} className={view === v.name ? 'is-on' : ''} aria-current={view === v.name} onClick={() => setView(v.name)}><v.icon /><span>{v.label}</span></button>)}
         </nav>
@@ -224,6 +228,7 @@ function Calendar({ session }: { session: Session | null }) {
       {sheet?.kind === 'project-new' && <Sheet key="project-new" label="New project" wide onClosed={() => setSheet(null)}>{(close) => <NewProject shared={shared} close={close} seed={sheet.seedId ? items.find((i) => i.id === sheet.seedId) ?? null : null} />}</Sheet>}
       {sheet?.kind === 'project' && openProject && <Sheet key={`project-${openProject.id}`} label={openProject.name} wide onClosed={() => setSheet(null)}>{(close) => <ProjectDetail project={openProject} shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'profile' && <Sheet label="Planning settings" wide onClosed={() => setSheet(null)}>{(close) => <ProfileEditor shared={shared} close={close} />}</Sheet>}
+      {sheet?.kind === 'assistant' && <Sheet key="assistant" label="Assistant" wide onClosed={() => setSheet(null)}>{(close) => <Assistant shared={shared} close={close} />}</Sheet>}
       {sheet?.kind === 'filters' && (
         <Sheet label="Filters" onClosed={() => setSheet(null)}>
           {(close) => (<><header className="sheet-bar"><b>Show on calendar</b><button className="btn-text is-strong" onClick={close}>Done</button></header><FilterList items={items} filters={filters} setFilters={setFilters} /></>)}

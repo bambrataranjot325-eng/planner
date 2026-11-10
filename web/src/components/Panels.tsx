@@ -100,7 +100,8 @@ export function ReviewQueue({ items, mutate, onEdit, close }: { items: Item[]; m
 
 export function SignIn() {
   const [email, setEmail] = useState('');
-  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [code, setCode] = useState('');
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'checking'>('idle');
   const [error, setError] = useState('');
   const send = async () => {
     if (!supabase || !email.includes('@')) return;
@@ -110,24 +111,37 @@ export function SignIn() {
     const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: false, emailRedirectTo: location.origin } });
     if (error) {
       setState('idle');
-      setError(/not allowed|not found|signups/i.test(error.message) ? 'That address has no account here.' : /rate|seconds/i.test(error.message) ? 'Too many tries. Wait a minute, then send again.' : `The link could not be sent: ${error.message}`);
+      setError(/not allowed|not found|signups/i.test(error.message) ? 'That address has no account here.' : /rate|seconds/i.test(error.message) ? 'Too many tries. Wait a minute, then send again.' : `The email could not be sent: ${error.message}`);
     } else setState('sent');
+  };
+  // Typing the code signs in *this* window. That matters for an app added to the Home Screen,
+  // which has its own storage: a link from the email opens in the browser and signs in there instead.
+  const verify = async () => {
+    if (!supabase || code.trim().length < 6) return;
+    setState('checking');
+    setError('');
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' });
+    if (error) { setState('sent'); setError(/expired|invalid/i.test(error.message) ? 'That code is wrong or has expired. Check it, or send a new one.' : `Could not sign in: ${error.message}`); }
   };
   return (
     <main className="signin">
       <img src="/icon-192.png" alt="" width={72} height={72} />
       <h1>Planner</h1>
-      {state === 'sent' ? (
-        <>
-          <p>Check {email} for a sign-in link. Open it on this device.</p>
-          <button className="btn-text" onClick={() => setState('idle')}>Use a different address</button>
-        </>
+      {state === 'sent' || state === 'checking' ? (
+        <form onSubmit={(e) => { e.preventDefault(); void verify(); }}>
+          <p>Enter the code we emailed to {email}.</p>
+          <input className="field field-code" inputMode="numeric" autoComplete="one-time-code" placeholder="Code" maxLength={10} value={code} autoFocus onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} aria-label="Sign-in code" />
+          {error && <p className="form-note">{error}</p>}
+          <button className="btn is-fill btn-wide" type="submit" disabled={state === 'checking' || code.length < 6}>{state === 'checking' ? 'Signing in' : 'Sign in'}</button>
+          <p className="signin-small">In a browser you can use the link in the email instead. In the Home Screen app, use the code.</p>
+          <button type="button" className="btn-text" onClick={() => { setState('idle'); setCode(''); setError(''); }}>Use a different address or resend</button>
+        </form>
       ) : (
         <form onSubmit={(e) => { e.preventDefault(); void send(); }}>
-          <p>Enter your email and we’ll send a link that signs you in. No password.</p>
+          <p>Enter your email and we’ll send a sign-in code. No password.</p>
           <input className="field" type="email" inputMode="email" autoComplete="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" required />
           {error && <p className="form-note">{error}</p>}
-          <button className="btn is-fill btn-wide" type="submit" disabled={state === 'sending'}>{state === 'sending' ? 'Sending' : 'Email me a sign-in link'}</button>
+          <button className="btn is-fill btn-wide" type="submit" disabled={state === 'sending'}>{state === 'sending' ? 'Sending' : 'Email me a code'}</button>
         </form>
       )}
       <a className="btn-text" href="?demo">Look around with sample data</a>

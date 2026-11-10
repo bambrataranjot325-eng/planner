@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { demoItems } from './demo';
+import type { ChatMessage, NewRow, ProposalState } from './assistant';
 import { DEFAULT_PROFILE, type PlannedSession, type Profile } from './planner';
 import type { AuditEntry, Item, ItemDraft, Project, ProjectPlan, SourceInfo } from './types';
 
@@ -28,12 +29,22 @@ export interface DataSource {
   applyPlan(projectId: string, plan: PlanMeta, sessions: PlannedSession[]): Promise<void>;
   /** Ask the AI to break the project into milestones with hours. Throws if it is unavailable. */
   estimate(input: EstimateInput): Promise<{ milestones: { title: string; hours: number }[]; rationale: string }>;
+  /** The saved assistant conversation, oldest first. */
+  chat(): Promise<ChatMessage[]>;
+  /** Send a message (and files) to the assistant. Returns its reply; nothing on the calendar changes. */
+  chatSend(text: string, attachments: Attachment[]): Promise<ChatMessage>;
+  chatSetState(id: string, state: ProposalState): Promise<void>;
+  chatClear(): Promise<void>;
+  /** Add the rows from one accepted proposal, tagged so they can be undone together. */
+  addItems(rows: NewRow[], batchId: string): Promise<void>;
+  undoBatch(batchId: string): Promise<void>;
 }
 
 /** `item_ids` are calendar items attached to the project; the AI reads them, and the emails they came from, as context. */
-export interface EstimateInput { name: string; description: string; course: string | null; deadline: string | null; item_ids: string[] }
+export interface EstimateInput { name: string; description: string; course: string | null; deadline: string | null; item_ids: string[]; background?: string | null }
 
-export type ProjectDraft = Pick<Project, 'name' | 'description' | 'course' | 'deadline' | 'granularity'>;
+export type ProjectDraft = Pick<Project, 'name' | 'description' | 'course' | 'deadline' | 'granularity' | 'background'>;
+export interface Attachment { name: string; media_type: string; data: string } // data is base64
 export interface PlanMeta {
   deadline: string; total_minutes: number; buffer_pct: number; granularity: 'daily' | 'weekly'; made_by: 'ai' | 'manual';
   milestones: { title: string; minutes: number; due?: string }[]; explanation: string[];
@@ -109,6 +120,33 @@ class SupabaseSource implements DataSource {
     if (!data?.milestones?.length) throw new Error('The AI returned no plan');
     return data as { milestones: { title: string; hours: number }[]; rationale: string };
   }
+  async chat() {
+    const rows = must(await this.sb.from('chat_messages').select('*').order('created_at', { ascending: false }).limit(80)) as ChatMessage[];
+    return rows.reverse();
+  }
+  async chatSend(text: string, attachments: Attachment[]) {
+    const { data, error } = await this.sb.functions.invoke('assistant', { body: { text, attachments, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+    if (error) {
+      let detail = error.message;
+      try { detail = (await (error as { context?: Response }).context?.json())?.error ?? detail; } catch { /* keep the generic message */ }
+      throw new Error(detail);
+    }
+    if (!data?.message) throw new Error('The assistant sent nothing back');
+    return data.message as ChatMessage;
+  }
+  async chatSetState(id: string, state: ProposalState) {
+    must(await this.sb.from('chat_messages').update({ proposal_state: state }).eq('id', id).select('id'));
+  }
+  async chatClear() {
+    must(await this.sb.from('chat_messages').delete().eq('user_id', this.userId).select('id'));
+  }
+  async addItems(rows: NewRow[], batchId: string) {
+    if (!rows.length) return;
+    must(await this.sb.from('items').insert(rows.map((r) => ({ ...r, user_id: this.userId, origin: 'manual', review_state: 'accepted', status: 'open', import_batch: batchId }))).select('id'));
+  }
+  async undoBatch(batchId: string) {
+    must(await this.sb.from('items').update({ deleted_at: new Date().toISOString() }).eq('import_batch', batchId).is('deleted_at', null).select('id'));
+  }
   /** Tell the server which timezone this device is in, so "by Friday" and the morning summary use it. */
   async reportTimezone() {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -147,6 +185,34 @@ class DemoSource implements DataSource {
     return [{ source_type: 'email', link: null, subject: it.title.replace(/^(Attend|Submit|Pay|Reply to) /, 'Re: '), sender: 'Sample sender', received_at: it.created_at }];
   }
   subscribe() { return () => {}; }
+
+  private msgs: ChatMessage[] = [];
+  async chat() { return this.msgs; }
+  async chatSend(text: string, attachments: Attachment[]) {
+    await new Promise((r) => setTimeout(r, 900));
+    const t = new Date();
+    const day = (n: number) => new Date(t.getTime() + n * 86_400_000).toISOString().slice(0, 10);
+    const mon = (() => { const d = new Date(t); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); return d.toISOString().slice(0, 10); })();
+    this.msgs.push({ id: `demo-u-${t.getTime()}`, role: 'user', content: text, attachments: attachments.map((a) => a.name), proposal: null, proposal_state: null, created_at: t.toISOString() });
+    const reply: ChatMessage = attachments.length
+      ? { id: `demo-a-${t.getTime()}`, role: 'assistant', attachments: [], proposal_state: null, created_at: t.toISOString(), content: 'This is sample data, so I did not really read the file. With your own account I would read it; here is the kind of proposal a timetable produces.',
+          proposal: { update: [], remove: [], add: [
+            { title: 'Operating Systems lecture', kind: 'event', start_local: `${mon}T09:30`, end_local: `${mon}T10:50`, course: 'CS-UY 3224', category: 'study', location: 'JAB 475', repeat: { weekdays: [1, 3], until: day(40) } },
+            { title: 'Operating Systems lab', kind: 'event', start_local: `${day(((12 - t.getDay()) % 7) || 7)}T14:00`, end_local: `${day(((12 - t.getDay()) % 7) || 7)}T16:00`, course: 'CS-UY 3224', category: 'study', repeat: { weekdays: [5], until: day(40) } },
+            { title: 'Operating Systems final exam', kind: 'event', start_local: `${day(44)}T13:00`, end_local: `${day(44)}T15:00`, course: 'CS-UY 3224', category: 'study', priority: 'high' },
+          ], class_blocks: [{ label: 'Operating Systems lecture', days: [1, 3], start: '09:30', end: '10:50' }, { label: 'Operating Systems lab', days: [5], start: '14:00', end: '16:00' }] } }
+      : { id: `demo-a-${t.getTime()}`, role: 'assistant', attachments: [], proposal_state: null, created_at: t.toISOString(), content: 'This is sample data, so I am not really reading your message. With your own account I would work out the date and details; here is a sample proposal.',
+          proposal: { update: [], remove: [], class_blocks: [], add: [{ title: text.replace(/^add\s+/i, '').slice(0, 60) || 'New event', kind: 'event', start_local: `${day(2)}T15:00`, end_local: `${day(2)}T16:00`, category: 'personal' }] } };
+    this.msgs.push(reply);
+    return reply;
+  }
+  async chatSetState(id: string, state: ProposalState) { const m = this.msgs.find((x) => x.id === id); if (m) m.proposal_state = state; }
+  async chatClear() { this.msgs = []; }
+  async addItems(rows: NewRow[], batchId: string) {
+    const t = new Date().toISOString();
+    rows.forEach((r, k) => this.items.push({ ...this.items[0]!, ...r, id: `${batchId}-${k}`, origin: 'manual', status: 'open', review_state: 'accepted', optional: false, description: null, priority_reason: null, link: null, confidence: null, overridden_fields: [], ai_values: {}, deleted_at: null, project_id: null, plan_id: null, import_batch: batchId, created_at: t, updated_at: t } as Item));
+  }
+  async undoBatch(batchId: string) { const t = new Date().toISOString(); for (const i of this.items) if (i.import_batch === batchId) i.deleted_at = t; }
 
   private prof: Profile = DEFAULT_PROFILE;
   private projs: Project[] = [];
