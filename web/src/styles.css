@@ -134,6 +134,16 @@ button:disabled { cursor: default; }
 .block-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .block-text span { opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .is-task.chip, .is-task.block { border-left: 0; background: color-mix(in srgb, var(--c) 9%, var(--bg)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 32%, transparent); }
+/* A "possible": dashed and unfilled, so it reads as pencilled in rather than planned. */
+.chip.is-optional, .block.is-optional { background: transparent; border: 1px dashed color-mix(in srgb, var(--c) 60%, transparent); box-shadow: none; color: color-mix(in srgb, var(--c) 55%, var(--label-2)); }
+.block.is-optional { padding-left: 0.4375rem; }
+.block.is-optional b, .chip.is-optional { font-weight: 500; }
+.row.is-optional .row-bar { background: none; border-left: 2px dashed var(--c); border-radius: 0; margin: 0 0.625rem 0 0.5625rem; }
+.row.is-optional .circle { border-style: dashed; }
+.row.is-optional .row-main b { color: var(--label-2); }
+.row-tag { flex: none; padding: 0.0625rem 0.5rem; border-radius: 1rem; background: var(--fill); color: var(--label-2); font-size: 0.6875rem; font-style: normal; font-weight: 600; }
+.month-dots i.is-optional { background: none; box-shadow: inset 0 0 0 1px var(--c); }
+.notice.is-quiet { background: var(--fill); }
 .is-done { opacity: 0.5; }
 .is-done b, .is-done > span, h1.is-done { text-decoration: line-through; }
 .is-cancelled b, .is-cancelled > span { text-decoration: line-through; }

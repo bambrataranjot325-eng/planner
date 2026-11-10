@@ -22,6 +22,7 @@ export const ExtractedItem = z.object({
   updates_item_id: z.string().uuid().nullable().optional(),
   cancelled: z.boolean().optional(),
   resolved: z.boolean().optional(),
+  optional: z.boolean().optional(), // an opportunity, not a commitment
   timezone: z.string().trim().max(60).nullable().optional(),
   end_timezone: z.string().trim().max(60).nullable().optional(),
 });

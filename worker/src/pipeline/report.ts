@@ -44,7 +44,7 @@ export function renderDryRun(entries: ReportEntry[], zone: string, account: stri
   out.push(`- Emails looked at: ${entries.length}`);
   out.push(`- Filtered out before the AI: ${skipped.length}`);
   out.push(`- Sent to the AI: ${passed.length} (${passed.filter((e) => e.escalated).length} needed a second model call, ${passed.filter((e) => e.failed).length} failed)`);
-  out.push(`- Items that would be created: ${created.filter((x) => x.i.review_state === 'accepted').length} on the calendar, ${created.filter((x) => x.i.review_state === 'needs_review').length} in Needs review`);
+  out.push(`- Items that would be created: ${created.filter((x) => x.i.review_state === 'accepted' && !x.i.optional).length} commitments and ${created.filter((x) => x.i.review_state === 'accepted' && x.i.optional).length} possibles on the calendar, ${created.filter((x) => x.i.review_state === 'needs_review').length} in Needs review`);
   out.push(`- Repeat emails merged into an existing item: ${count('merged')}`);
   out.push(`- Items updated: ${count('updated')}, marked done: ${count('completed')}, cancelled: ${count('cancelled')}`);
   out.push(`- Not created because the date had already passed: ${count('skipped_past')}`);
@@ -53,7 +53,7 @@ export function renderDryRun(entries: ReportEntry[], zone: string, account: stri
   out.push('## Would be created', '');
   out.push('| Email | From | Item | Kind | When | Priority | Confidence | Goes to |', '|---|---|---|---|---|---|---|---|');
   for (const { e, i } of created) {
-    out.push(`| ${cell(e.subject).slice(0, 50)} | ${senderName(e.from)} | ${cell(i.title)} | ${i.kind} | ${when(i, zone)} | ${i.priority} | ${i.confidence.toFixed(2)} | ${i.review_state === 'accepted' ? 'Calendar' : 'Needs review'} |`);
+    out.push(`| ${cell(e.subject).slice(0, 50)} | ${senderName(e.from)} | ${cell(i.title)} | ${i.kind} | ${when(i, zone)} | ${i.priority} | ${i.confidence.toFixed(2)} | ${i.review_state !== 'accepted' ? 'Needs review' : i.optional ? 'Calendar, as possible' : 'Calendar'} |`);
   }
   if (!created.length) out.push('| (nothing) | | | | | | | |');
 

@@ -415,7 +415,7 @@ describe('dry-run report', () => {
     const entry = (subject: string, items: any[]) => ({ receivedAt: new Date(), from: 'StubHub <a@b.c>', subject, filter: 'pass', escalated: false, items });
     const md = renderDryRun([entry('Tickets on the way', [mk('Attend Joji concert', 'created')]), entry('Tickets ready', [mk('Attend Joji concert at Afterpay Arena', 'merged')]), entry('Old', [mk('Attend Screamfest', 'skipped_past')]), { ...entry('Promo', []), filter: 'gmail_promotions' }], NY, 'me@example.com', 0.01, '');
     expect(md).toContain('| Attend Joji concert | event | starts Sat 14 Nov, 7:00 PM Sydney time |');
-    expect(md).toContain('Items that would be created: 1 on the calendar');
+    expect(md).toContain('Items that would be created: 1 commitments and 0 possibles on the calendar');
     expect(md).toContain('Repeat emails merged into an existing item: 1');
     expect(md).toContain('Not created because the date had already passed: 1');
     expect(md).toContain('## Merged into an item listed earlier');
@@ -578,9 +578,42 @@ describe('bulk mail', () => {
     expect(estimateCost(spec, 1000, 0, 2000, 0)).toBeCloseTo((1000 + 200) * 3 / 1e6, 10);
     expect(estimateCost(spec, 1000, 0, 0, 2000)).toBeCloseTo((1000 + 2500) * 3 / 1e6, 10);
   });
-  it('the current prompt has the obligations-only rule and the advert rule', () => {
+  it('the current prompt keeps sales and job listings out entirely', () => {
     const p = loadPrompt(loadModels().prompt_version);
-    expect(p).toContain('Extract only OBLIGATIONS');
-    expect(p).toContain('is marketing: zero items');
+    expect(p).toContain('Leave these out entirely');
+    expect(p).toContain('sales and promotions, job listings');
+  });
+});
+
+describe('possible items', () => {
+  const NOW = new Date('2026-11-10T04:00:00Z');
+  const base: ExtractedItem = { title: 'Attend CSE Lock-Picking Workshop', summary: 's', kind: 'event', start_local: '2026-11-19T14:00', end_local: null, due_local: null, due_precision: 'exact', course: null, priority: 'high', priority_reason: 'r', category: 'study', action_required: true, confidence: 0.8, timezone: 'America/New_York' };
+  it('a possible is stored as optional, low priority, with no action required', () => {
+    expect(toItemRow({ ...base, optional: true }, SYD, 0.6)).toMatchObject({ optional: true, priority: 'low', action_required: false });
+    expect(toItemRow(base, SYD, 0.6)).toMatchObject({ optional: false, priority: 'high', action_required: true });
+  });
+  it('a later ticket email for the same event turns the possible into a plan, without duplicating it', async () => {
+    const store = new MemoryStore();
+    const ctx = (ref: string) => ({ knownIds: new Set<string>(), threadKey: ref, src: { type: 'email' as const, ref, link: 'l', sourceId: null, messageRowId: null }, skipPast: false, now: NOW });
+    const possible = toItemRow({ ...base, optional: true }, SYD, 0.6);
+    expect((await applyItem(store, { ...base, optional: true }, possible, ctx('digest'))).action).toBe('created');
+    expect(store.items[0]!.row.optional).toBe(true);
+    const ticket = toItemRow({ ...base, title: 'Attend Lock-Picking Workshop (CSE)' }, SYD, 0.6);
+    expect((await applyItem(store, { ...base }, ticket, ctx('ticket'))).action).toBe('merged');
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0]!.row.optional).toBe(false);
+  });
+  it('the same advert in two digests is one possible, and stays a possible', async () => {
+    const store = new MemoryStore();
+    const ctx = (ref: string) => ({ knownIds: new Set<string>(), threadKey: ref, src: { type: 'email' as const, ref, link: 'l', sourceId: null, messageRowId: null }, skipPast: false, now: NOW });
+    const row = toItemRow({ ...base, optional: true }, SYD, 0.6);
+    await applyItem(store, { ...base, optional: true }, row, ctx('week12'));
+    expect((await applyItem(store, { ...base, optional: true }, row, ctx('week13'))).action).toBe('merged');
+    expect(store.items[0]!.row.optional).toBe(true);
+  });
+  it('the current prompt explains commitments and possibles', () => {
+    const p = loadPrompt(loadModels().prompt_version);
+    expect(p).toContain('"optional": true | false');
+    expect(p).toContain('at most the 6 possibles');
   });
 });

@@ -6,7 +6,7 @@ delete, the Needs review queue, and filters. React with Vite, hosted on Vercel, 
 ## Before deploying
 
 In the Supabase SQL editor, paste and run the contents of `supabase/migrations/0004_realtime_and_trash.sql`
-(and `0003_item_timezone.sql` if you have not already).
+(and `0003_item_timezone.sql` and `0005_possible_items.sql` if you have not already).
 
 ## Deploy (about 15 minutes, once)
 
@@ -47,6 +47,8 @@ Every later `git push` redeploys, and pull requests get their own preview addres
   the item shows them under "Edited by you" with a Revert button.
 - **Delete:** moves it to Trash for 30 days. The message that appears has an Undo.
 - **Needs review:** uncertain items wait there, off the calendar, until you Accept or Dismiss.
+- **Possible events:** dashed items are things you could go to, not plans. Open one and choose I'm going
+  or Not interested. Untick "Possible events" in the sidebar to hide them all.
 - **Filters:** untick a category, course, source or priority to hide it. On a phone, the sliders button.
 
 ## Try it without an account

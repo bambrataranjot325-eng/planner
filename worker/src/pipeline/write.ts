@@ -9,6 +9,7 @@ export interface ItemRow {
   end_at: string | null;
   due_at: string | null;
   all_day: boolean;
+  optional: boolean; // shown as "possible": something I could do, not something I must
   timezone: string | null; // the event's own timezone when the email made it clear; null = mine
   due_precision: 'exact' | 'date_only' | 'approximate' | null;
   course: string | null;
@@ -39,13 +40,14 @@ export function toItemRow(item: ExtractedItem, zone: string, reviewBelow: number
     // A "task" that the model gave only a start time for still needs a deadline.
     due_at: isEvent ? null : (due?.iso ?? localToUtc(item.start_local, startZone, 'end')?.iso ?? null),
     all_day: isEvent && !!start?.dateOnly,
+    optional: !!item.optional,
     timezone: ownZone,
     due_precision: item.due_precision,
     course: item.course || null,
-    priority: item.priority,
+    priority: item.optional ? 'low' : item.priority,
     priority_reason: item.priority_reason,
     category: item.category,
-    action_required: item.action_required,
+    action_required: item.optional ? false : item.action_required,
     confidence: Math.round(item.confidence * 100) / 100,
     // Low confidence, or a cancellation I should confirm, goes to the review queue.
     review_state: item.confidence < reviewBelow || item.cancelled ? 'needs_review' : 'accepted',

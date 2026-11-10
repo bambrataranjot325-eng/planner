@@ -1,5 +1,5 @@
 {
-  "prompt_version": "extract.v4",
+  "prompt_version": "extract.v5",
   "first_pass": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-6",

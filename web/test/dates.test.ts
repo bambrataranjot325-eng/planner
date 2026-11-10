@@ -76,6 +76,11 @@ describe('filters', () => {
     expect(matchesFilters(item({ status: 'done' }), NO_FILTERS)).toBe(false);
     expect(matchesFilters(item({ status: 'done' }), { ...NO_FILTERS, showDone: true })).toBe(true);
   });
+  it('possible items show by default and can be hidden', () => {
+    expect(matchesFilters(item({ optional: true }), NO_FILTERS)).toBe(true);
+    expect(matchesFilters(item({ optional: true }), { ...NO_FILTERS, showPossible: false })).toBe(false);
+    expect(matchesFilters(item({}), { ...NO_FILTERS, showPossible: false })).toBe(true);
+  });
   it('unticking a category, course, source or priority hides only those', () => {
     expect(matchesFilters(item({ category: 'finance' }), { ...NO_FILTERS, hiddenCategories: ['finance'] })).toBe(false);
     expect(matchesFilters(item({ course: 'CS-UY 1134' }), { ...NO_FILTERS, hiddenCourses: ['CS-UY 1134'] })).toBe(false);

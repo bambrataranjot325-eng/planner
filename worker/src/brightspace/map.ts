@@ -99,6 +99,7 @@ export function mapFeed(events: IcsEvent[], zone: string, now: Date): { items: F
         kind: isTask ? 'task' : 'event',
         start_at, end_at, due_at,
         all_day: !isTask && e.allDay,
+        optional: false,
         timezone: null,
         due_precision: isTask ? (e.allDay ? 'date_only' : 'exact') : null,
         course: courseOf(e.location),

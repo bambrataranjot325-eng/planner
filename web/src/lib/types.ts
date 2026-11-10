@@ -16,6 +16,8 @@ export interface Item {
   end_at: string | null;
   due_at: string | null;
   all_day: boolean;
+  /** A "possible": something I could go to, not something I've committed to. */
+  optional?: boolean;
   due_precision: 'exact' | 'date_only' | 'approximate' | null;
   timezone: string | null;
   location: string | null;
@@ -65,8 +67,9 @@ export interface Filters {
   hiddenPriorities: Priority[];
   hiddenCourses: string[];
   showDone: boolean;
+  showPossible: boolean;
 }
-export const NO_FILTERS: Filters = { hiddenOrigins: [], hiddenCategories: [], hiddenPriorities: [], hiddenCourses: [], showDone: false };
+export const NO_FILTERS: Filters = { hiddenOrigins: [], hiddenCategories: [], hiddenPriorities: [], hiddenCourses: [], showDone: false, showPossible: true };
 
 export const CATEGORIES: Category[] = ['study', 'work', 'personal', 'finance', 'health', 'admin', 'other'];
 export const PRIORITIES: Priority[] = ['high', 'medium', 'low'];

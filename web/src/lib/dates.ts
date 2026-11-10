@@ -39,6 +39,7 @@ export function matchesFilters(item: Item, f: Filters): boolean {
   if (item.review_state === 'needs_review') return false; // lives in the review queue until accepted
   if (item.status === 'dismissed') return false;
   if (!f.showDone && item.status === 'done') return false;
+  if (!f.showPossible && item.optional) return false;
   if (f.hiddenOrigins.includes(item.origin)) return false;
   if (f.hiddenCategories.includes(item.category)) return false;
   if (f.hiddenPriorities.includes(item.priority)) return false;

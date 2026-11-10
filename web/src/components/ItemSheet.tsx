@@ -172,6 +172,13 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: Deta
           <div><button className="btn is-fill" onClick={() => { mutate(item.id, { review_state: 'accepted' }); close(); }}>Accept</button><button className="btn" onClick={() => { mutate(item.id, { status: 'dismissed', review_state: 'accepted' }); close(); }}>Dismiss</button></div>
         </div>
       )}
+      {item.optional && item.review_state === 'accepted' && item.status === 'open' && (
+        <div className="notice is-quiet">
+          <b>Possible</b>
+          <span>This is something you could {item.kind === 'event' ? 'go to' : 'do'}, found in a newsletter or announcement. It isn't a commitment.</span>
+          <div><button className="btn is-fill" onClick={() => mutate(item.id, { optional: false })}>{item.kind === 'event' ? 'I’m going' : 'I’ll do it'}</button><button className="btn" onClick={() => { mutate(item.id, { status: 'dismissed' }); close(); }}>Not interested</button></div>
+        </div>
+      )}
       {item.status === 'cancelled' && (
         <div className="notice">
           <b>This was cancelled</b>
@@ -182,7 +189,7 @@ export function ItemDetail({ item, data, mutate, onDelete, onEdit, close }: Deta
 
       {item.summary && <p className="detail-summary">{item.summary}</p>}
 
-      {item.status !== 'cancelled' && (
+      {item.status !== 'cancelled' && !item.optional && (
         <button className={`btn btn-wide${done || item.kind === 'event' ? '' : ' is-fill'}`} onClick={() => mutate(item.id, { status: done ? 'open' : 'done' })}>
           {done ? 'Mark as not done' : <><Check size={16} /> Mark as done</>}
         </button>

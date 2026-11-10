@@ -128,6 +128,7 @@ export async function applyItem(store: ItemStore, item: ExtractedItem, row: Item
   const dup = findDuplicate(row, await store.nearby(row));
   if (dup) {
     await store.link(dup.id, ctx.src); // keep every source reference on the one item
+    if (!row.optional) await store.update(dup.id, { optional: false }); // a ticket or sign-up turns a "possible" into a plan
     return { action: 'merged', itemId: dup.id };
   }
   const id = await store.insert(row, ctx.threadKey, ctx.src.link, 'email');

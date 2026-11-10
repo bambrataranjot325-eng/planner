@@ -25,7 +25,7 @@ function TaskCircle({ item, onToggle }: { item: Item; onToggle: (i: Item) => voi
 }
 
 function cls(item: Item, base: string) {
-  return `${base} cat-${item.category}${item.status === 'done' ? ' is-done' : ''}${item.status === 'cancelled' ? ' is-cancelled' : ''}${item.kind === 'task' ? ' is-task' : ''}`;
+  return `${base} cat-${item.category}${item.status === 'done' ? ' is-done' : ''}${item.status === 'cancelled' ? ' is-cancelled' : ''}${item.kind === 'task' ? ' is-task' : ''}${item.optional ? ' is-optional' : ''}`;
 }
 
 /** Day and week views: an all-day strip above an hour grid. */
@@ -147,7 +147,7 @@ export function MonthView({ cursor, byDay, onOpen, onPickDay }: Common & { curso
                 {list.length > 3 && <div className="month-more">{list.length - 3} more</div>}
               </div>
               <div className="month-dots" aria-hidden="true">
-                {list.slice(0, 4).map((it) => <i key={it.id} className={`cat-${it.category}`} />)}
+                {list.slice(0, 4).map((it) => <i key={it.id} className={`cat-${it.category}${it.optional ? ' is-optional' : ''}`} />)}
               </div>
             </div>
           );
@@ -165,7 +165,8 @@ function Row({ item, onOpen, onToggleDone }: { item: Item } & Pick<Common, 'onOp
         <b>{item.title}</b>
         <span>{[timeLabel(item), item.course, item.location].filter(Boolean).join(', ')}</span>
       </div>
-      {item.priority === 'high' && item.status === 'open' && <em className="row-flag">High</em>}
+      {item.optional && <em className="row-tag">Possible</em>}
+      {item.priority === 'high' && item.status === 'open' && !item.optional && <em className="row-flag">High</em>}
     </div>
   );
 }

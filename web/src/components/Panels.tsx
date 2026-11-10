@@ -32,6 +32,7 @@ export function FilterList({ items, filters, setFilters }: { items: Item[]; filt
       <h3>Priority</h3>
       {PRIORITIES.map((p) => <Tick key={p} label={p[0]!.toUpperCase() + p.slice(1)} on={!filters.hiddenPriorities.includes(p)} onChange={(on) => setFilters({ ...filters, hiddenPriorities: toggle(filters.hiddenPriorities, p, on) })} />)}
       <h3>Show</h3>
+      <Tick label="Possible events" on={filters.showPossible} onChange={(on) => setFilters({ ...filters, showPossible: on })} />
       <Tick label="Done items" on={filters.showDone} onChange={(on) => setFilters({ ...filters, showDone: on })} />
     </div>
   );

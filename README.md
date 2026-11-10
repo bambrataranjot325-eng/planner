@@ -25,7 +25,7 @@ calendar items. Phase 1 has no app yet: you look at results in a report file and
 
 ### 1. Supabase
 
-1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql` and `0004_realtime_and_trash.sql` (the file contents, not the file names).
+1. Open the new project's **SQL Editor**. Paste and run the contents of `supabase/migrations/0001_init.sql`, then `0002_retention.sql`, then `0003_item_timezone.sql`, `0004_realtime_and_trash.sql` and `0005_possible_items.sql` (the file contents, not the file names).
 2. **Authentication > Users > Add user**: create a user with your email. Copy its **UID**.
 3. **Project Settings > API**: copy the project URL and the secret (service role) key.
 
@@ -144,9 +144,12 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
   and signatures removed, truncated at 6,000 characters. Card numbers, passwords, account numbers and
   one-time codes are masked first. No attachments.
 - **Two models:** mail from a person goes to the stronger model. Newsletters, digests and list mail go
-  to a cheaper one under a stricter rule: only obligations (deadlines, required forms, payments, exams)
-  become items, never optional events or postings. A malformed reply is retried once, then the stronger
+  to a cheaper one under a stricter rule: obligations (deadlines, required forms, payments, exams)
+  become normal items and optional events become possibles. A malformed reply is retried once, then the stronger
   model is asked.
+- **Possibles:** events and opportunities you could take up but haven't (a workshop in a digest, a
+  fellowship deadline) are saved as "possible" and drawn dashed in the app. A ticket or sign-up email turns
+  one into a plan. Sales, job listings and surveys are left out entirely.
 - **Blocking a sender:** add a row to `sender_rules`. `@shop.com` blocks a domain, `news@shop.com` an
   address, and a word with no @ (such as `WSJ`) blocks any sender whose name contains it.
 - **Review queue:** items under 0.6 confidence, and cancellations, are saved with
@@ -170,7 +173,7 @@ Where to look in Supabase: `items` (results), `worker_runs` (one row per run wit
 ## Tests
 
 ```
-make test                 # 104 unit tests
+make test                 # 108 unit tests
 ./scripts/test-sql.sh     # needs a local Postgres; runs the migration and the security tests
 ```
 
